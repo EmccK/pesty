@@ -2,16 +2,63 @@ import SwiftUI
 import AppKit
 
 struct SettingsView: View {
+    @State private var tab: Tab = .general
+
+    private enum Tab: CaseIterable {
+        case general, privacy, about
+
+        var title: String {
+            switch self {
+            case .general: L("General")
+            case .privacy: L("Privacy")
+            case .about: L("About")
+            }
+        }
+    }
+
     var body: some View {
-        TabView {
-            GeneralSettings()
-                .tabItem { Label(L("General"), systemImage: "gearshape") }
-            PrivacySettings()
-                .tabItem { Label(L("Privacy"), systemImage: "hand.raised") }
-            AboutView()
-                .tabItem { Label(L("About"), systemImage: "info.circle") }
+        VStack(spacing: 0) {
+            tabBar
+            content
         }
         .frame(width: 520, height: 560)
+    }
+
+    /// Hand-rolled pill tabs instead of TabView, whose native tab strip draws
+    /// a backing and separator that break up the window's uniform background.
+    private var tabBar: some View {
+        HStack(spacing: 2) {
+            ForEach(Tab.allCases, id: \.self) { item in
+                Button {
+                    tab = item
+                } label: {
+                    Text(item.title)
+                        .font(.system(size: 13, weight: tab == item ? .semibold : .regular))
+                        .foregroundStyle(tab == item ? .primary : .secondary)
+                        .padding(.horizontal, 16)
+                        .padding(.vertical, 5)
+                        .background {
+                            if tab == item {
+                                Capsule()
+                                    .fill(Color(nsColor: .controlBackgroundColor))
+                                    .shadow(color: .black.opacity(0.12), radius: 1.5, y: 0.5)
+                            }
+                        }
+                }
+                .buttonStyle(.plain)
+                .accessibilityAddTraits(tab == item ? .isSelected : [])
+            }
+        }
+        .padding(.vertical, 8)
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        switch tab {
+        case .general: GeneralSettings()
+        case .privacy: PrivacySettings()
+        case .about: AboutView()
+        }
     }
 }
 

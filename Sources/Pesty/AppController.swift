@@ -573,6 +573,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let win = NSWindow(contentViewController: host)
         win.title = L("Pesty Settings")
         win.styleMask = [.titled, .closable, .miniaturizable]
+        // Let the title strip share the window background instead of drawing
+        // its own lighter material, so the whole window reads as one surface.
+        win.titlebarAppearsTransparent = true
         win.setContentSize(NSSize(width: 520, height: 560))
         win.center()
         win.isReleasedWhenClosed = false
