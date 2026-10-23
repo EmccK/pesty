@@ -25,7 +25,7 @@ final class CopyToastController {
     }
 
     /// A notice sized to its text; the default is the plain copy confirmation.
-    func show(message: String = "Copied to Clipboard",
+    func show(message: String? = nil,
               symbol: String = "checkmark.circle.fill",
               linger: TimeInterval = 1.25) {
         dismissWorkItem?.cancel()
@@ -34,7 +34,8 @@ final class CopyToastController {
             ?? NSScreen.screens.first
         guard let screen else { return }
 
-        host.rootView = CopyToastView(message: message, symbol: symbol)
+        host.rootView = CopyToastView(message: message ?? L("Copied to Clipboard"),
+                                      symbol: symbol)
         let size = host.intrinsicContentSize
         if size.width > 0, size.height > 0 { panel.setContentSize(size) }
         let frame = screen.visibleFrame

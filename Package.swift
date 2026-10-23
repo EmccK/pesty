@@ -3,6 +3,7 @@ import PackageDescription
 
 let package = Package(
     name: "Pesty",
+    defaultLocalization: "en",
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "Pesty", targets: ["Pesty"])
@@ -11,6 +12,9 @@ let package = Package(
         .executableTarget(
             name: "Pesty",
             path: "Sources/Pesty",
+            resources: [
+                .process("Resources")
+            ],
             swiftSettings: [
                 .unsafeFlags(["-parse-as-library"])
             ]

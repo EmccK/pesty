@@ -76,7 +76,9 @@ struct ClipCardView: View {
     }
 
     private var cardTypeLabel: String {
-        if item.type == .file, item.fileURLs.count > 1 { return "\(item.fileURLs.count) files" }
+        if item.type == .file, item.fileURLs.count > 1 {
+            return L("%ld files", item.fileURLs.count)
+        }
         return item.type.label
     }
 
@@ -185,7 +187,7 @@ struct ClipCardView: View {
                 .foregroundStyle(Theme.cardTextSecondary).lineLimit(2)
                 .multilineTextAlignment(.center)
             if fileInfo?.isMissing == true {
-                Text("File not found")
+                Text(L("File not found"))
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Theme.cardTextTertiary)
             }
@@ -265,7 +267,7 @@ struct ClipCardView: View {
     private var metaLeft: String {
         switch item.type {
         case .text, .richText:
-            return "\(item.charCount) characters"
+            return L("%ld characters", item.charCount)
         case .link:
             return (item.text ?? "").replacingOccurrences(of: "https://", with: "")
                                     .replacingOccurrences(of: "http://", with: "")
@@ -286,10 +288,10 @@ struct ClipCardView: View {
             }
             return Self.abbreviatedPath(url.path)
         case .image:
-            guard let size = ImagePixelSize.of(item) else { return "Image" }
+            guard let size = ImagePixelSize.of(item) else { return L("Image") }
             return "\(Int(size.width)) × \(Int(size.height))"
         case .color:
-            return item.colorHex ?? "Color"
+            return item.colorHex ?? L("Color")
         }
     }
 
@@ -300,46 +302,46 @@ struct ClipCardView: View {
         }
 
         Button { AppController.shared.pasteItem(item, format: .plainText) } label: {
-            Label("Paste as Plain Text", systemImage: "text.alignleft")
+            Label(L("Paste as Plain Text"), systemImage: "text.alignleft")
         }
         .disabled(item.plainText == nil)
 
         Button { AppController.shared.pasteItem(item, format: .cleanFormatting) } label: {
-            Label("Paste with Clean Formatting", systemImage: "paintbrush")
+            Label(L("Paste with Clean Formatting"), systemImage: "paintbrush")
         }
         .disabled(!FormatConverter.canConvert(item))
 
         Button { AppController.shared.pasteItem(item, format: .markdown) } label: {
-            Label("Paste as Markdown", systemImage: "number")
+            Label(L("Paste as Markdown"), systemImage: "number")
         }
         .disabled(!FormatConverter.canConvert(item))
 
         Button { AppController.shared.copyItem(item) } label: {
-            Label("Copy", systemImage: "doc.on.doc")
+            Label(L("Copy"), systemImage: "doc.on.doc")
         }
 
         Divider()
 
         Button { AppController.shared.editItem(item) } label: {
-            Label("Edit", systemImage: "pencil")
+            Label(L("Edit"), systemImage: "pencil")
         }
         .disabled(!isEditable)
 
         if writingToolsAvailable {
             Button { AppController.shared.editItem(item, launchWritingTools: true) } label: {
-                Label("Writing Tools", systemImage: "pencil.and.scribble")
+                Label(L("Writing Tools"), systemImage: "pencil.and.scribble")
             }
         }
 
         Button { renameItem() } label: {
-            Label("Rename…", systemImage: "pencil.line")
+            Label(L("Rename…"), systemImage: "pencil.line")
         }
 
         Divider()
 
         Menu {
             if store.pinboards.isEmpty {
-                Button("No Pinboards Yet") {}
+                Button(L("No Pinboards Yet")) {}
                     .disabled(true)
             } else {
                 ForEach(store.pinboards) { b in
@@ -355,20 +357,20 @@ struct ClipCardView: View {
             }
             Divider()
             Button { pinToNewBoard() } label: {
-                Label("Create Pinboard…", systemImage: "plus")
+                Label(L("Create Pinboard…"), systemImage: "plus")
             }
         } label: {
-            Label("Pin", systemImage: "pin")
+            Label(L("Pin"), systemImage: "pin")
         }
 
         Divider()
 
         Button { AppController.shared.showPreview(for: item) } label: {
-            Label("Preview", systemImage: "eye")
+            Label(L("Preview"), systemImage: "eye")
         }
 
         Button { AppController.shared.showSharePicker(for: item) } label: {
-            Label("Share", systemImage: "square.and.arrow.up")
+            Label(L("Share"), systemImage: "square.and.arrow.up")
         }
 
         Divider()
@@ -382,7 +384,7 @@ struct ClipCardView: View {
 
     private var deleteMenuTitle: String {
         let count = store.multiSelectedIDs.contains(item.id) ? store.multiSelectedIDs.count : 1
-        return count > 1 ? "Delete \(count) Clips" : "Delete"
+        return count > 1 ? L("Delete %ld Clips", count) : L("Delete")
     }
 
     private var isEditable: Bool {
@@ -396,14 +398,14 @@ struct ClipCardView: View {
     }
 
     private func renameItem() {
-        if let title = TextPrompt.run(title: "Rename", message: "Card title",
+        if let title = TextPrompt.run(title: L("Rename"), message: L("Card title"),
                                       defaultValue: item.customTitle ?? "") {
             store.setTitle(title, for: item)
         }
     }
 
     private func pinToNewBoard() {
-        if let name = TextPrompt.run(title: "Create Pinboard", message: "Name") {
+        if let name = TextPrompt.run(title: L("Create Pinboard"), message: L("Name")) {
             let board = store.addPinboard(name: name)
             store.saveToPinboard(item, boardID: board.id)
         }

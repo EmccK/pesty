@@ -5,11 +5,11 @@ struct SettingsView: View {
     var body: some View {
         TabView {
             GeneralSettings()
-                .tabItem { Label("General", systemImage: "gearshape") }
+                .tabItem { Label(L("General"), systemImage: "gearshape") }
             PrivacySettings()
-                .tabItem { Label("Privacy", systemImage: "hand.raised") }
+                .tabItem { Label(L("Privacy"), systemImage: "hand.raised") }
             AboutView()
-                .tabItem { Label("About", systemImage: "info.circle") }
+                .tabItem { Label(L("About"), systemImage: "info.circle") }
         }
         .frame(width: 520, height: 560)
     }
@@ -20,15 +20,15 @@ private struct PrivacySettings: View {
 
     var body: some View {
         Form {
-            Section("Excluded Apps") {
-                Text("Pesty will not save anything copied while one of these apps is frontmost. Copies made from a browser extension are attributed to the browser, so add that too if you use one.")
+            Section(L("Excluded Apps")) {
+                Text(L("Pesty will not save anything copied while one of these apps is frontmost. Copies made from a browser extension are attributed to the browser, so add that too if you use one."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
 
                 if settings.ignoredSourceAppBundleIDs.isEmpty {
-                    ContentUnavailableView("No apps excluded",
+                    ContentUnavailableView(L("No apps excluded"),
                                            systemImage: "hand.raised",
-                                           description: Text("Add an app to keep its copied content out of Pesty."))
+                                           description: Text(L("Add an app to keep its copied content out of Pesty.")))
                         .padding(.vertical, 12)
                 } else {
                     ForEach(settings.ignoredSourceAppBundleIDs, id: \.self) { bundleID in
@@ -37,7 +37,7 @@ private struct PrivacySettings: View {
                 }
 
                 Button { chooseApps() } label: {
-                    Label("Add App…", systemImage: "plus")
+                    Label(L("Add App…"), systemImage: "plus")
                 }
             }
         }
@@ -64,16 +64,16 @@ private struct PrivacySettings: View {
                     .foregroundStyle(.secondary)
             }
             .buttonStyle(.plain)
-            .help("Allow clips from \(applicationName(for: bundleID))")
+            .help(L("Allow clips from %@", applicationName(for: bundleID)))
         }
         .padding(.vertical, 4)
     }
 
     private func chooseApps() {
         let panel = NSOpenPanel()
-        panel.title = "Exclude Apps from Pesty"
-        panel.message = "Pesty will ignore copied content from the apps you choose."
-        panel.prompt = "Add Apps"
+        panel.title = L("Exclude Apps from Pesty")
+        panel.message = L("Pesty will ignore copied content from the apps you choose.")
+        panel.prompt = L("Add Apps")
         panel.canChooseFiles = true
         panel.canChooseDirectories = false
         panel.allowsMultipleSelection = true
@@ -106,51 +106,63 @@ private struct GeneralSettings: View {
 
     var body: some View {
         Form {
-            Section("Activation") {
-                LabeledContent("Show Pesty") { HotkeyRecorderView() }
+            Section(L("Activation")) {
+                LabeledContent(L("Show Pesty")) { HotkeyRecorderView() }
             }
 
             HistoryRetentionSettings()
 
-            Section("Quick Paste") {
-                LabeledContent("Paste items 1–9") {
+            Section(L("Quick Paste")) {
+                LabeledContent(L("Paste items 1–9")) {
                     HStack(spacing: 6) {
                         modifierPicker(selection: $settings.quickPasteModifier)
                         Text("+ 1…9").foregroundStyle(.secondary)
                     }
                 }
-                LabeledContent("Paste as plain text") {
+                LabeledContent(L("Paste as plain text")) {
                     modifierPicker(selection: $settings.plainTextModifier)
                 }
-                Text("Hold the plain-text modifier while using Quick Paste to strip formatting — with the defaults, ⌘⇧1 pastes the first clip as plain text. The two roles can never share a modifier; picking one that is taken swaps them.")
+                Text(L("Hold the plain-text modifier while using Quick Paste to strip formatting — with the defaults, ⌘⇧1 pastes the first clip as plain text. The two roles can never share a modifier; picking one that is taken swaps them."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
 
-            Section("Behavior") {
+            Section(L("Behavior")) {
                 #if !MAS
-                Toggle("Paste directly into the active app", isOn: $settings.pasteDirectly)
+                Toggle(L("Paste directly into the active app"), isOn: $settings.pasteDirectly)
                 #endif
-                Toggle("Ignore passwords (concealed clips)", isOn: $settings.ignoreConcealed)
-                Toggle("Promote pasted clips to the top of history", isOn: $settings.promoteOnPaste)
-                Toggle("Play sound on paste", isOn: $settings.playSound)
-                Toggle("Play sound when copying from Pesty", isOn: $settings.playSoundOnCopy)
-                Toggle("Hide Pesty when clicking outside", isOn: $settings.hideOnClickOutside)
-                Toggle("Launch at login", isOn: $settings.launchAtLogin)
-                Toggle("Show Pesty in the menu bar", isOn: $settings.showMenuBarIcon)
+                Toggle(L("Ignore passwords (concealed clips)"), isOn: $settings.ignoreConcealed)
+                Toggle(L("Promote pasted clips to the top of history"), isOn: $settings.promoteOnPaste)
+                Toggle(L("Play sound on paste"), isOn: $settings.playSound)
+                Toggle(L("Play sound when copying from Pesty"), isOn: $settings.playSoundOnCopy)
+                Toggle(L("Hide Pesty when clicking outside"), isOn: $settings.hideOnClickOutside)
+                Toggle(L("Launch at login"), isOn: $settings.launchAtLogin)
+                Toggle(L("Show Pesty in the menu bar"), isOn: $settings.showMenuBarIcon)
                 VStack(alignment: .leading) {
-                    LabeledContent("Bar height", value: "\(Int(settings.barHeight)) pt")
+                    LabeledContent(L("Bar height"), value: L("%ld pt", Int(settings.barHeight)))
                     Slider(value: $settings.barHeight, in: 300...720, step: 10)
                 }
-                Toggle("Show resize handle on the Paste Bar", isOn: $settings.showBarResizeHandle)
+                Toggle(L("Show resize handle on the Paste Bar"), isOn: $settings.showBarResizeHandle)
                 #if MAS
-                Text("Select a clip to copy it, then press ⌘V to paste it into your app.")
+                Text(L("Select a clip to copy it, then press ⌘V to paste it into your app."))
                     .font(.caption).foregroundStyle(.secondary)
                 #endif
             }
 
-            Section("Clip Colors") {
-                Picker("Color theme", selection: $settings.clipColorTheme) {
+            Section(L("Language")) {
+                Picker(L("Interface language"), selection: $settings.appLanguage) {
+                    ForEach(AppLanguage.allCases) { language in
+                        Text(language.title).tag(language)
+                    }
+                }
+                .pickerStyle(.menu)
+                Text(L("Switches Pesty's own menus and windows. Clips you copy keep their original text."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section(L("Clip Colors")) {
+                Picker(L("Color theme"), selection: $settings.clipColorTheme) {
                     ForEach(ClipColorTheme.allCases) { theme in
                         Text(theme.title).tag(theme)
                     }
@@ -160,9 +172,9 @@ private struct GeneralSettings: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
                 if settings.clipColorTheme == .accentShades {
-                    ColorPicker("Base color", selection: clipColorAccent, supportsOpacity: false)
+                    ColorPicker(L("Base color"), selection: clipColorAccent, supportsOpacity: false)
                     HStack(spacing: 12) {
-                        Text("Preview")
+                        Text(L("Preview"))
                             .foregroundStyle(.secondary)
                         HStack(spacing: 4) {
                             ForEach(Array(SourceColor.accentShades(for: settings.clipColorAccentHex).enumerated()),
@@ -172,16 +184,16 @@ private struct GeneralSettings: View {
                                     .frame(width: 13, height: 13)
                             }
                         }
-                        .accessibilityLabel("Ten stable shades of the selected base color")
+                        .accessibilityLabel(L("Ten stable shades of the selected base color"))
                     }
-                    Text("Each source app keeps one of ten deterministic shades, so its cards stay recognizable without drifting too far from your chosen color.")
+                    Text(L("Each source app keeps one of ten deterministic shades, so its cards stay recognizable without drifting too far from your chosen color."))
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }
             }
 
-            Section("Clip Navigation") {
-                Picker("Selected clip position", selection: $settings.selectedClipPosition) {
+            Section(L("Clip Navigation")) {
+                Picker(L("Selected clip position"), selection: $settings.selectedClipPosition) {
                     ForEach(SelectedClipPosition.allCases) { position in
                         Text(position.title).tag(position)
                     }
@@ -193,8 +205,8 @@ private struct GeneralSettings: View {
             }
 
             #if MAS
-            Section("Sync") {
-                Toggle("Sync history with iCloud", isOn: Binding(
+            Section(L("Sync")) {
+                Toggle(L("Sync history with iCloud"), isOn: Binding(
                     get: { settings.cloudKitSync },
                     set: { on in
                         settings.cloudKitSync = on
@@ -204,53 +216,53 @@ private struct GeneralSettings: View {
                     .font(.caption).foregroundStyle(.secondary)
             }
             #else
-            Section("Sync") {
-                Toggle("Sync clipboard via iCloud Drive", isOn: Binding(
+            Section(L("Sync")) {
+                Toggle(L("Sync clipboard via iCloud Drive"), isOn: Binding(
                     get: { settings.iCloudSync },
                     set: { _ in AppController.shared.toggleICloudSync() }))
                 Text(ClipboardStore.shared.iCloudAvailable
-                     ? "Keeps your history and pinboards in sync across your Macs through iCloud Drive."
-                     : "Sign in to iCloud and enable iCloud Drive to use sync.")
+                     ? L("Keeps your history and pinboards in sync across your Macs through iCloud Drive.")
+                     : L("Sign in to iCloud and enable iCloud Drive to use sync."))
                     .font(.caption).foregroundStyle(.secondary)
             }
             #endif
 
             #if !MAS
-            Section("Permissions") {
+            Section(L("Permissions")) {
                 HStack(spacing: 10) {
                     Image(systemName: accessibilityGranted ? "checkmark.circle.fill" : "exclamationmark.triangle.fill")
                         .foregroundStyle(accessibilityGranted ? .green : .orange)
                         .font(.title3)
                     VStack(alignment: .leading, spacing: 2) {
-                        Text("Accessibility")
+                        Text(L("Accessibility"))
                         Text(accessibilityGranted
-                             ? "Granted — direct paste is enabled."
+                             ? L("Granted — direct paste is enabled.")
                              : (requestedGrant
-                                ? "Waiting… toggle Pesty on in System Settings."
-                                : "Required to paste directly into other apps."))
+                                ? L("Waiting… toggle Pesty on in System Settings.")
+                                : L("Required to paste directly into other apps.")))
                             .font(.caption)
                             .foregroundStyle(accessibilityGranted ? .green : .secondary)
                     }
                     Spacer()
                     if !accessibilityGranted {
-                        Button("Open Settings") {
+                        Button(L("Open Settings")) {
                             requestedGrant = true
                             PasteService.ensureAccessibility(prompt: true)
                             openAccessibilityPane()
                         }
                     } else if requestedGrant {
-                        Button("Restart Pesty") { AppController.restart() }
+                        Button(L("Restart Pesty")) { AppController.restart() }
                     }
                 }
             }
             #endif
 
-            Section("Data") {
-                Toggle("Delete permanently", isOn: $settings.deletePermanently)
-                Text("Skips the five-minute Undo window: deleted clips are removed at once and cannot be recovered. Hold Option while deleting to skip Undo for one deletion, whatever this setting says.")
+            Section(L("Data")) {
+                Toggle(L("Delete permanently"), isOn: $settings.deletePermanently)
+                Text(L("Skips the five-minute Undo window: deleted clips are removed at once and cannot be recovered. Hold Option while deleting to skip Undo for one deletion, whatever this setting says."))
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Button("Clear Clipboard History", role: .destructive) {
+                Button(L("Clear Clipboard History"), role: .destructive) {
                     ClipboardStore.shared.clearHistory()
                 }
             }
@@ -309,7 +321,7 @@ private struct HistoryRetentionSettings: View {
     private var storageSummary: String {
         let store = ClipboardStore.shared
         let count = store.history.count + store.pinboards.reduce(0) { $0 + $1.items.count }
-        let clips = "\(count) clip\(count == 1 ? "" : "s")"
+        let clips = LCount(count, one: "%ld clip", many: "%ld clips")
         guard let storageBytes else { return clips }
         return "\(clips) · \(ByteCountFormatter.string(fromByteCount: storageBytes, countStyle: .file))"
     }
@@ -338,7 +350,7 @@ private struct HistoryRetentionSettings: View {
 
     var body: some View {
         Section {
-            Picker("Limit history by", selection: $draftMode) {
+            Picker(L("Limit history by"), selection: $draftMode) {
                 ForEach(HistoryRetentionMode.allCases) { mode in
                     Text(mode.title).tag(mode)
                 }
@@ -346,18 +358,18 @@ private struct HistoryRetentionSettings: View {
             .pickerStyle(.segmented)
             if draftMode == .itemCount {
                 Stepper(value: $draftLimit, in: 50...5000, step: 50) {
-                    LabeledContent("Keep at most", value: "\(draftLimit) clips")
+                    LabeledContent(L("Keep at most"), value: L("%ld clips", draftLimit))
                 }
             }
         } header: {
-            Text("History")
+            Text(L("History"))
         } footer: {
             // A grouped Form lays Section body rows out on a shared label/control
             // grid that clamps a bare Slider; the footer is plain full-width content.
             if draftMode != .itemCount {
                 VStack(alignment: .leading, spacing: 9) {
                     HStack {
-                        Text("Remove clips older than")
+                        Text(L("Remove clips older than"))
                         Spacer()
                         Text(sliderPreset.title)
                             .fontWeight(.semibold)
@@ -385,7 +397,7 @@ private struct HistoryRetentionSettings: View {
                 .font(.caption)
                 .foregroundStyle(.secondary)
                 .padding(.top, draftMode == .itemCount ? 0 : 4)
-            LabeledContent("History and pinboards on disk", value: storageSummary)
+            LabeledContent(L("History and pinboards on disk"), value: storageSummary)
         }
         .task {
             await refreshStorageSize()
@@ -397,19 +409,19 @@ private struct HistoryRetentionSettings: View {
         .onChange(of: draftLimit) { evaluateDraft() }
         .onChange(of: draftDays) { evaluateDraft() }
         .onChange(of: sliderValue) { if !sliderEditing { applySliderValue() } }
-        .alert("Remove \(pendingRemovalCount) Clips?", isPresented: $confirmingChange) {
-            Button("Remove \(pendingRemovalCount) Clips", role: .destructive) { commit() }
-            Button("Cancel", role: .cancel) { revert() }
+        .alert(L("Remove %ld Clips?", pendingRemovalCount), isPresented: $confirmingChange) {
+            Button(L("Remove %ld Clips", pendingRemovalCount), role: .destructive) { commit() }
+            Button(L("Cancel"), role: .cancel) { revert() }
         } message: {
-            Text("This setting removes \(pendingRemovalCount) clips from history on this Mac now, and keeps pruning automatically. Pinboards are not affected, and there is no undo.")
+            Text(L("This setting removes %ld clips from history on this Mac now, and keeps pruning automatically. Pinboards are not affected, and there is no undo.", pendingRemovalCount))
         }
     }
 
     private var footnote: String {
         #if MAS
-        "Pruning tidies this Mac only — synced copies stay on your other devices. Pinned clips are never removed."
+        L("Pruning tidies this Mac only — synced copies stay on your other devices. Pinned clips are never removed.")
         #else
-        "Pruning applies to this Mac's history. Pinned clips are never removed."
+        L("Pruning applies to this Mac's history. Pinned clips are never removed.")
         #endif
     }
 
@@ -450,23 +462,23 @@ private struct AboutView: View {
             Image(nsImage: NSApp.applicationIconImage ?? NSImage())
                 .resizable().frame(width: 88, height: 88)
             Text("Pesty").font(.system(size: 26, weight: .bold))
-            Text("Version \(Bundle.main.appVersion)")
+            Text(L("Version %@", Bundle.main.appVersion))
                 .font(.subheadline).foregroundStyle(.secondary)
-            Text("A free, open-source clipboard manager for macOS.\nInspired by Paste.")
+            Text(L("A free, open-source clipboard manager for macOS.\nInspired by Paste."))
                 .multilineTextAlignment(.center)
                 .foregroundStyle(.secondary)
                 .padding(.horizontal)
             HStack(spacing: 16) {
-                Link("GitHub", destination: URL(string: "https://github.com/momenbasel/pesty")!)
-                Link("Report an Issue", destination: URL(string: "https://github.com/momenbasel/pesty/issues")!)
+                Link(L("GitHub"), destination: URL(string: "https://github.com/momenbasel/pesty")!)
+                Link(L("Report an Issue"), destination: URL(string: "https://github.com/momenbasel/pesty/issues")!)
             }
             .padding(.top, 4)
-            Button("Quit Pesty", role: .destructive) {
+            Button(L("Quit Pesty"), role: .destructive) {
                 NSApp.terminate(nil)
             }
             .padding(.top, 8)
             Spacer()
-            Text("MIT Licensed · Made with SwiftUI")
+            Text(L("MIT Licensed · Made with SwiftUI"))
                 .font(.caption).foregroundStyle(.tertiary)
         }
         .padding(28)

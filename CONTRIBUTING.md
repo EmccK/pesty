@@ -38,6 +38,10 @@ open packaging/Pesty.app
 - Match the existing style. Small, focused changes; no unrelated refactors in the same PR.
 - Test on both Apple Silicon and Intel where it matters (the release is universal).
 - UI changes: include a before/after screenshot of the strip. If the change has no visual delta (refactor, accessibility labels, focus order), say so in the PR description instead.
+- New user-facing strings go through `L("English source text")`, and the Chinese
+  translation goes into `Sources/Pesty/Resources/zh-Hans.lproj/Localizable.strings`
+  keyed by that same English text. English needs no entry: a missing key falls
+  back to the key itself, so the English build can never be half-translated.
 
 ## Pull requests
 

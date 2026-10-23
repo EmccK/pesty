@@ -42,6 +42,7 @@ It is a faithful, native reimplementation of the Paste experience - built in **S
 - **Keyboard-first** - arrow keys to move, `return` to paste, `⌘1`–`⌘9` to quick-paste, `⌫` or `⌘⌫` to delete, `esc` to close.
 - **Paste directly** - drops the clip into the app you were using, no manual `⌘V` needed.
 - **Privacy-aware** - ignores clips marked concealed by password managers; history stored with `0600` permissions.
+- **English and 简体中文** - pick a language in Settings, or follow the system. Switching applies immediately, without a relaunch.
 - **Menu-bar app** - runs quietly as a menu-bar item, optional launch at login.
 - **Native & light** - a single universal `.app`, no Electron, no background web stack.
 
@@ -116,6 +117,8 @@ Sources/Pesty/
   Hotkey/               HotKeyCenter (Carbon global hotkey)
   UI/                   BarView, ClipCardView, PinboardTabs, the sliding panel
   Settings/             Settings store + preferences window + hotkey recorder
+  Localization/         AppLanguage, the shared lookup, the language switch
+  Resources/            zh-Hans.lproj/Localizable.strings
   Util/                 icons, color hex, visual-effect view, launch-at-login
 scripts/                build, icon, sign + notarize
 packaging/              Info.plist, entitlements, generated artifacts

@@ -4,6 +4,29 @@ All notable changes to Pesty are documented here. The format is based on
 [Keep a Changelog](https://keepachangelog.com/), and this project adheres to
 [Semantic Versioning](https://semver.org/).
 
+## [Unreleased]
+
+### Added
+- Chinese (Simplified) localization, alongside English. Every user-facing
+  string in the app - the strip, card menus, the editor, every Settings pane,
+  the About window, alerts, and the sync status line - now goes through a
+  single lookup, and the bundled `zh-Hans.lproj/Localizable.strings` holds the
+  translations.
+- "Interface language" in Settings → General, with Follow System, English, and
+  简体中文. Switching takes effect immediately: the main menu, the menu-bar
+  menu, open windows, and the strip all relabel in place, with no relaunch.
+  Clips keep their original text either way.
+- Relative timestamps and card dates follow the interface language instead of
+  the system locale, so a card reads "12 seconds ago" or "12 秒钟前" to match
+  the rest of the UI.
+
+### Changed
+- The iCloud sync status is now derived from a state enum instead of a stored
+  string, so it re-renders in the current language rather than freezing at
+  whatever language was active when the state last changed.
+- `scripts/build_app.sh` and `scripts/build_mas.sh` copy the SwiftPM resource
+  bundle into the app, and `Info.plist` declares `en` and `zh-Hans`.
+
 ## [1.3.0] - 2026-10-08
 
 The v2 wave of features from @alvst (#80), each reviewed and landed with the

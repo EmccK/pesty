@@ -21,10 +21,10 @@ enum ShortcutModifier: CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .command: return "Command"
-        case .option: return "Option"
-        case .control: return "Control"
-        case .shift: return "Shift"
+        case .command: return L("Command")
+        case .option: return L("Option")
+        case .control: return L("Control")
+        case .shift: return L("Shift")
         }
     }
 
@@ -53,8 +53,8 @@ enum HistoryRetentionMode: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .itemCount: return "Number of clips"
-        case .timeInterval: return "Age of clips"
+        case .itemCount: return L("Number of clips")
+        case .timeInterval: return L("Age of clips")
         }
     }
 }
@@ -95,30 +95,30 @@ enum HistoryRetentionPreset: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .day: return "1 Day"
-        case .week: return "1 Week"
-        case .twoWeeks: return "2 Weeks"
-        case .threeWeeks: return "3 Weeks"
-        case .month: return "1 Month"
-        case .twoMonths: return "2 Months"
-        case .threeMonths: return "3 Months"
-        case .sixMonths: return "6 Months"
-        case .year: return "1 Year"
-        case .forever: return "Forever"
+        case .day: return L("1 Day")
+        case .week: return L("1 Week")
+        case .twoWeeks: return L("2 Weeks")
+        case .threeWeeks: return L("3 Weeks")
+        case .month: return L("1 Month")
+        case .twoMonths: return L("2 Months")
+        case .threeMonths: return L("3 Months")
+        case .sixMonths: return L("6 Months")
+        case .year: return L("1 Year")
+        case .forever: return L("Forever")
         }
     }
 
     var shortTitle: String {
         switch self {
-        case .day: return "1d"
-        case .week: return "1w"
-        case .twoWeeks: return "2w"
-        case .threeWeeks: return "3w"
-        case .month: return "1m"
-        case .twoMonths: return "2m"
-        case .threeMonths: return "3m"
-        case .sixMonths: return "6m"
-        case .year: return "1y"
+        case .day: return L("1d")
+        case .week: return L("1w")
+        case .twoWeeks: return L("2w")
+        case .threeWeeks: return L("3w")
+        case .month: return L("1m")
+        case .twoMonths: return L("2m")
+        case .threeMonths: return L("3m")
+        case .sixMonths: return L("6m")
+        case .year: return L("1y")
         case .forever: return "∞"
         }
     }
@@ -147,20 +147,20 @@ enum ClipColorTheme: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .default: "Default"
-        case .vibrant: "Vibrant"
-        case .accentShades: "Accent shades"
+        case .default: L("Default")
+        case .vibrant: L("Vibrant")
+        case .accentShades: L("Accent shades")
         }
     }
 
     var detail: String {
         switch self {
         case .default:
-            "Match each clip to its source app\u{2019}s familiar card color."
+            L("Match each clip to its source app's familiar card color.")
         case .vibrant:
-            "Use a stronger, higher-contrast version of each source app color."
+            L("Use a stronger, higher-contrast version of each source app color.")
         case .accentShades:
-            "Give each source app a stable lighter or darker shade of one color."
+            L("Give each source app a stable lighter or darker shade of one color.")
         }
     }
 }
@@ -173,15 +173,15 @@ enum SelectedClipPosition: Int, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
-        case .center: "Center"
-        case .rightEdge: "Right edge"
+        case .center: L("Center")
+        case .rightEdge: L("Right edge")
         }
     }
 
     var detail: String {
         switch self {
-        case .center: "Keep the selected clip centered with surrounding context visible."
-        case .rightEdge: "Place the selected clip at the far right, like Paste."
+        case .center: L("Keep the selected clip centered with surrounding context visible.")
+        case .rightEdge: L("Place the selected clip at the far right, like Paste.")
         }
     }
 }
@@ -220,6 +220,7 @@ final class Settings {
         static let clipColorTheme = "clipColorTheme"
         static let clipColorAccentHex = "clipColorAccentHex"
         static let selectedClipPosition = "selectedClipPosition"
+        static let appLanguage = "appLanguage"
     }
 
     var historyLimit: Int {
@@ -368,6 +369,16 @@ final class Settings {
         didSet { guard isLoaded else { return }; d.set(selectedClipPosition.rawValue, forKey: Keys.selectedClipPosition) }
     }
 
+    /// The interface language. Written straight through to `Localization`, which
+    /// swaps the active table and notifies AppKit surfaces to rebuild.
+    var appLanguage: AppLanguage {
+        didSet {
+            guard isLoaded else { return }
+            d.set(appLanguage.rawValue, forKey: Keys.appLanguage)
+            Localization.shared.language = appLanguage
+        }
+    }
+
     private init() {
         d.register(defaults: [
             Keys.historyLimit: 500,
@@ -396,7 +407,8 @@ final class Settings {
             Keys.cloudKitSync: true,
             Keys.clipColorTheme: ClipColorTheme.default.rawValue,
             Keys.clipColorAccentHex: "#FF5A9F",
-            Keys.selectedClipPosition: SelectedClipPosition.center.rawValue
+            Keys.selectedClipPosition: SelectedClipPosition.center.rawValue,
+            Keys.appLanguage: AppLanguage.system.rawValue
         ])
         historyLimit = d.integer(forKey: Keys.historyLimit)
         historyRetentionMode = HistoryRetentionMode(rawValue: d.string(forKey: Keys.historyRetentionMode) ?? "")
@@ -427,6 +439,7 @@ final class Settings {
         clipColorTheme = ClipColorTheme(rawValue: d.integer(forKey: Keys.clipColorTheme)) ?? .default
         clipColorAccentHex = d.string(forKey: Keys.clipColorAccentHex) ?? "#FF5A9F"
         selectedClipPosition = SelectedClipPosition(rawValue: d.integer(forKey: Keys.selectedClipPosition)) ?? .center
+        appLanguage = AppLanguage.persisted
         isLoaded = true
         if normalizedBarHeight != storedBarHeight {
             d.set(normalizedBarHeight, forKey: Keys.barHeight)

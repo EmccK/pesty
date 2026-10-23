@@ -86,7 +86,7 @@ struct BarView: View {
                 .foregroundStyle(settings.iCloudSync ? Theme.selection : Theme.chromeTextSecondary)
         }
         .buttonStyle(.plain)
-        .help(settings.iCloudSync ? "iCloud sync on" : "Turn on iCloud sync")
+        .help(settings.iCloudSync ? L("iCloud sync on") : L("Turn on iCloud sync"))
     }
 
     private var searchIndicator: some View {
@@ -124,7 +124,7 @@ struct BarView: View {
                         .font(.system(size: 12)).foregroundStyle(Theme.chromeTextTertiary)
                 }
                 .buttonStyle(.plain)
-                .accessibilityLabel("Clear search")
+                .accessibilityLabel(L("Clear search"))
             }
         }
         .padding(.horizontal, searchIsActive ? 10 : 0)
@@ -143,46 +143,46 @@ struct BarView: View {
         return Button(role: .destructive) {
             AppController.shared.deleteEffectiveSelection()
         } label: {
-            Label("Delete \(count)", systemImage: "trash")
+            Label(L("Delete %ld", count), systemImage: "trash")
                 .font(.system(size: 12.5, weight: .medium))
                 .lineLimit(1)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .fixedSize()
-        .help("Delete \(count) selected clips (⌘⌫)")
-        .accessibilityLabel("Delete \(count) selected clips")
+        .help(L("Delete %ld selected clips (⌘⌫)", count))
+        .accessibilityLabel(L("Delete %ld selected clips", count))
     }
 
     private var undoButton: some View {
         Button {
             store.undoLastDelete()
         } label: {
-            Label("Undo", systemImage: "arrow.uturn.backward")
+            Label(L("Undo"), systemImage: "arrow.uturn.backward")
                 .font(.system(size: 12.5, weight: .medium))
                 .lineLimit(1)
         }
         .buttonStyle(.bordered)
         .controlSize(.small)
         .fixedSize()
-        .help("Undo the last deletion (⌘Z), available for 5 minutes")
-        .accessibilityLabel("Undo last deletion")
+        .help(L("Undo the last deletion (⌘Z), available for 5 minutes"))
+        .accessibilityLabel(L("Undo last deletion"))
     }
 
     private var moreMenu: some View {
         Menu {
             Button { AppController.shared.showSettings() } label: {
-                Label("Settings…", systemImage: "gearshape")
+                Label(L("Settings…"), systemImage: "gearshape")
             }
             Button { store.clearHistory() } label: {
-                Label("Clear History", systemImage: "trash")
+                Label(L("Clear History"), systemImage: "trash")
             }
             Divider()
             Button { AppController.shared.showAbout() } label: {
-                Label("About Pesty", systemImage: "info.circle")
+                Label(L("About Pesty"), systemImage: "info.circle")
             }
             Button { NSApp.terminate(nil) } label: {
-                Label("Quit Pesty", systemImage: "power")
+                Label(L("Quit Pesty"), systemImage: "power")
             }
         } label: {
             Image(systemName: "ellipsis")
@@ -255,8 +255,8 @@ struct BarView: View {
                 .font(.system(size: 34, weight: .light))
                 .foregroundStyle(Theme.chromeTextTertiary)
             Text(store.searchText.isEmpty
-                 ? "Nothing copied yet"
-                 : "No matches for “\(store.searchText)”")
+                 ? L("Nothing copied yet")
+                 : L("No matches for “%@”", store.searchText))
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.chromeTextSecondary)
         }

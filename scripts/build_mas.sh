@@ -15,7 +15,8 @@ INSTALLER_IDENTITY="${INSTALLER_IDENTITY:-3rd Party Mac Developer Installer: Moa
 
 echo "==> Building universal release binary (sandboxed, no Accessibility — MAS flag)"
 swift build -c release --arch arm64 --arch x86_64 -Xswiftc -DMAS
-BIN="$(swift build -c release --arch arm64 --arch x86_64 -Xswiftc -DMAS --show-bin-path)/Pesty"
+BIN_DIR="$(swift build -c release --arch arm64 --arch x86_64 -Xswiftc -DMAS --show-bin-path)"
+BIN="$BIN_DIR/Pesty"
 bash scripts/make_icon.sh >/dev/null
 
 echo "==> Assembling $APP"
@@ -23,6 +24,15 @@ rm -rf "$APP"
 mkdir -p "$APP/Contents/MacOS" "$APP/Contents/Resources"
 cp "$BIN" "$APP/Contents/MacOS/Pesty"
 cp packaging/Pesty.icns "$APP/Contents/Resources/Pesty.icns"
+
+# SwiftPM emits localizations as a separate resource bundle next to the
+# binary; without it every L() lookup falls back to English.
+RESOURCE_BUNDLE="$BIN_DIR/Pesty_Pesty.bundle"
+if [ -d "$RESOURCE_BUNDLE" ]; then
+  cp -R "$RESOURCE_BUNDLE" "$APP/Contents/Resources/"
+else
+  echo "    warning: $RESOURCE_BUNDLE not found; running in English only" >&2
+fi
 sed -e "s/__VERSION__/$VERSION/" -e "s/__BUILD__/$BUILD/" packaging/Info.plist > "$APP/Contents/Info.plist"
 printf 'APPL????' > "$APP/Contents/PkgInfo"
 cp "$PROFILE" "$APP/Contents/embedded.provisionprofile"

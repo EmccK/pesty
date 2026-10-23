@@ -48,6 +48,10 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             self, selector: #selector(screenParametersChanged),
             name: NSApplication.didChangeScreenParametersNotification, object: nil)
 
+        NotificationCenter.default.addObserver(
+            self, selector: #selector(languageDidChange),
+            name: .pestyLanguageDidChange, object: nil)
+
         monitor.start()
 
         HotKeyCenter.shared.onTrigger = { [weak self] in self?.toggleBar() }
@@ -129,27 +133,27 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
         let appItem = NSMenuItem()
         let appMenu = NSMenu()
-        appMenu.addItem(withTitle: "About Pesty", action: #selector(menuAbout), keyEquivalent: "").target = self
+        appMenu.addItem(withTitle: L("About Pesty"), action: #selector(menuAbout), keyEquivalent: "").target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
+        appMenu.addItem(withTitle: L("Settings…"), action: #selector(menuSettings), keyEquivalent: ",").target = self
         appMenu.addItem(.separator())
-        appMenu.addItem(withTitle: "Hide Pesty", action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
-        appMenu.addItem(withTitle: "Quit Pesty", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
+        appMenu.addItem(withTitle: L("Hide Pesty"), action: #selector(NSApplication.hide(_:)), keyEquivalent: "h")
+        appMenu.addItem(withTitle: L("Quit Pesty"), action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q")
         appItem.submenu = appMenu
         main.addItem(appItem)
 
         let editItem = NSMenuItem()
-        let editMenu = NSMenu(title: "Edit")
-        editMenu.addItem(withTitle: "Undo", action: Selector(("undo:")), keyEquivalent: "z")
-        let redo = editMenu.addItem(withTitle: "Redo", action: Selector(("redo:")), keyEquivalent: "z")
+        let editMenu = NSMenu(title: L("Edit"))
+        editMenu.addItem(withTitle: L("Undo"), action: Selector(("undo:")), keyEquivalent: "z")
+        let redo = editMenu.addItem(withTitle: L("Redo"), action: Selector(("redo:")), keyEquivalent: "z")
         redo.keyEquivalentModifierMask = [.command, .shift]
         editMenu.addItem(.separator())
-        editMenu.addItem(withTitle: "Cut", action: #selector(NSText.cut(_:)), keyEquivalent: "x")
-        editMenu.addItem(withTitle: "Copy", action: #selector(NSText.copy(_:)), keyEquivalent: "c")
-        editMenu.addItem(withTitle: "Paste", action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: "Select All", action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: L("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
+        editMenu.addItem(withTitle: L("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
+        editMenu.addItem(withTitle: L("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
+        editMenu.addItem(withTitle: L("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
         editMenu.addItem(.separator())
-        let find = editMenu.addItem(withTitle: "Find…",
+        let find = editMenu.addItem(withTitle: L("Find…"),
                                     action: #selector(NSTextView.performTextFinderAction(_:)),
                                     keyEquivalent: "f")
         find.tag = NSTextFinder.Action.showFindInterface.rawValue
@@ -157,9 +161,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         main.addItem(editItem)
 
         let windowItem = NSMenuItem()
-        let windowMenu = NSMenu(title: "Window")
-        windowMenu.addItem(withTitle: "Close Window", action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
-        windowMenu.addItem(withTitle: "Minimize", action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
+        let windowMenu = NSMenu(title: L("Window"))
+        windowMenu.addItem(withTitle: L("Close Window"), action: #selector(NSWindow.performClose(_:)), keyEquivalent: "w")
+        windowMenu.addItem(withTitle: L("Minimize"), action: #selector(NSWindow.performMiniaturize(_:)), keyEquivalent: "m")
         windowItem.submenu = windowMenu
         main.addItem(windowItem)
         NSApp.windowsMenu = windowMenu
@@ -172,20 +176,41 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.variableLength)
         updateStatusItemIcon(item)
         let menu = NSMenu()
-        menu.addItem(withTitle: "Open Pesty   \(Settings.shared.hotkeyDisplay)",
+        menu.addItem(withTitle: L("Open Pesty   %@", Settings.shared.hotkeyDisplay),
                      action: #selector(menuOpen), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        menu.addItem(withTitle: "Settings…", action: #selector(menuSettings), keyEquivalent: ",").target = self
-        let pause = menu.addItem(withTitle: "Pause Pesty", action: #selector(menuTogglePause), keyEquivalent: "")
+        menu.addItem(withTitle: L("Settings…"), action: #selector(menuSettings), keyEquivalent: ",").target = self
+        let pause = menu.addItem(withTitle: L("Pause Pesty"), action: #selector(menuTogglePause), keyEquivalent: "")
         pause.target = self
         pauseMenuItem = pause
-        menu.addItem(withTitle: "Clear History", action: #selector(menuClear), keyEquivalent: "").target = self
+        menu.addItem(withTitle: L("Clear History"), action: #selector(menuClear), keyEquivalent: "").target = self
         menu.addItem(.separator())
-        let about = menu.addItem(withTitle: "About Pesty", action: #selector(menuAbout), keyEquivalent: "")
+        let about = menu.addItem(withTitle: L("About Pesty"), action: #selector(menuAbout), keyEquivalent: "")
         about.target = self
-        menu.addItem(withTitle: "Quit Pesty", action: #selector(menuQuit), keyEquivalent: "q").target = self
+        menu.addItem(withTitle: L("Quit Pesty"), action: #selector(menuQuit), keyEquivalent: "q").target = self
         item.menu = menu
         statusItem = item
+    }
+
+    /// AppKit surfaces (menus, status item, window titles) are built once and do
+    /// not observe `Localization`, so a language change rebuilds them by hand.
+    @objc private func languageDidChange() {
+        installMainMenu()
+        if statusItem != nil {
+            if let item = statusItem {
+                NSStatusBar.system.removeStatusItem(item)
+            }
+            statusItem = nil
+            pauseMenuItem = nil
+            if Settings.shared.showMenuBarIcon { setupStatusItem() }
+        }
+        if let win = settingsWindow {
+            win.title = L("Pesty Settings")
+        }
+        if let win = previewWindow, let id = previewedItemID,
+           let item = store.item(withID: id) {
+            win.title = L("Preview — %@", item.displayTitle)
+        }
     }
 
     func setMenuBarIconVisible(_ visible: Bool) {
@@ -206,24 +231,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func togglePestyPause() {
         monitor.togglePause()
-        pauseMenuItem?.title = monitor.isPaused ? "Resume Pesty" : "Pause Pesty"
+        pauseMenuItem?.title = monitor.isPaused ? L("Resume Pesty") : L("Pause Pesty")
         if let item = statusItem { updateStatusItemIcon(item) }
     }
 
     private func updateStatusItemIcon(_ item: NSStatusItem) {
         item.button?.image = NSImage(
             systemSymbolName: monitor.isPaused ? "pause.circle" : "doc.on.clipboard",
-            accessibilityDescription: "Pesty")
+            accessibilityDescription: L("Pesty"))
         item.button?.image?.isTemplate = true
     }
 
     func showAbout() {
         NSApp.activate(ignoringOtherApps: true)
         NSApp.orderFrontStandardAboutPanel(options: [
-            .applicationName: "Pesty",
+            .applicationName: L("Pesty"),
             .applicationVersion: Bundle.main.appVersion,
             .credits: NSAttributedString(
-                string: "A free, open-source clipboard manager for macOS.\nInspired by Paste.",
+                string: L("A free, open-source clipboard manager for macOS.\nInspired by Paste."),
                 attributes: [.font: NSFont.systemFont(ofSize: 11)])
         ])
     }
@@ -232,8 +257,8 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let enabling = !Settings.shared.iCloudSync
         if enabling && !ClipboardStore.shared.iCloudAvailable {
             let alert = NSAlert()
-            alert.messageText = "iCloud Drive Unavailable"
-            alert.informativeText = "Sign in to iCloud and enable iCloud Drive in System Settings to sync your clipboard across your Macs."
+            alert.messageText = L("iCloud Drive Unavailable")
+            alert.informativeText = L("Sign in to iCloud and enable iCloud Drive in System Settings to sync your clipboard across your Macs.")
             alert.runModal()
             return
         }
@@ -397,7 +422,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     func noteBlockedDirectPaste() {
         guard !notedBlockedDirectPaste else { return }
         notedBlockedDirectPaste = true
-        copyToast.show(message: "Copied. Grant Accessibility in System Settings to paste directly.",
+        copyToast.show(message: L("Copied. Grant Accessibility in System Settings to paste directly."),
                        symbol: "exclamationmark.triangle.fill",
                        linger: 4)
     }
@@ -426,9 +451,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     var pasteMenuTitle: String {
         guard let name = pasteTarget?.localizedName,
               !name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
-            return "Paste"
+            return L("Paste")
         }
-        return "Paste to \(name)"
+        return L("Paste to %@", name)
     }
 
     func editItem(_ item: ClipItem, launchWritingTools: Bool = false) {
@@ -454,7 +479,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         NSApp.activate(ignoringOtherApps: true)
 
         let host = NSHostingController(rootView: ClipPreviewView(item: item))
-        let title = "Preview — \(item.displayTitle)"
+        let title = L("Preview — %@", item.displayTitle)
         previewedItemID = item.id
 
         if let window = previewWindow {
@@ -511,20 +536,20 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         suppressAutoHide = true
         defer { suppressAutoHide = false }
         let alert = NSAlert()
-        alert.messageText = "Delete \(targets.count) Clips?"
+        alert.messageText = L("Delete %ld Clips?", targets.count)
         let noUndo = permanently || Settings.shared.deletePermanently
         #if MAS
         alert.informativeText = noUndo
-            ? "This cannot be undone. When iCloud sync is on, these clips are also removed from your other devices."
-            : "You can undo this with ⌘Z for the next 5 minutes. When iCloud sync is on, these clips are also removed from your other devices."
+            ? L("This cannot be undone. When iCloud sync is on, these clips are also removed from your other devices.")
+            : L("You can undo this with ⌘Z for the next 5 minutes. When iCloud sync is on, these clips are also removed from your other devices.")
         #else
         alert.informativeText = noUndo
-            ? "This cannot be undone."
-            : "You can undo this with ⌘Z for the next 5 minutes."
+            ? L("This cannot be undone.")
+            : L("You can undo this with ⌘Z for the next 5 minutes.")
         #endif
-        let confirm = alert.addButton(withTitle: "Delete \(targets.count) Clips")
+        let confirm = alert.addButton(withTitle: L("Delete %ld Clips", targets.count))
         confirm.hasDestructiveAction = true
-        alert.addButton(withTitle: "Cancel")
+        alert.addButton(withTitle: L("Cancel"))
         guard alert.runModal() == .alertFirstButtonReturn else { return }
         store.delete(items: targets, permanently: permanently)
     }
@@ -546,7 +571,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         let view = SettingsView()
         let host = NSHostingController(rootView: view)
         let win = NSWindow(contentViewController: host)
-        win.title = "Pesty Settings"
+        win.title = L("Pesty Settings")
         win.styleMask = [.titled, .closable, .miniaturizable]
         win.setContentSize(NSSize(width: 520, height: 560))
         win.center()

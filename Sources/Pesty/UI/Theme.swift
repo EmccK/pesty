@@ -37,22 +37,25 @@ extension Date {
     var clipRelative: String {
         let secs = -timeIntervalSinceNow
         switch secs {
-        case ..<5:        return "Now"
+        case ..<5:        return L("Now")
         case ..<60:       return "\(Int(secs))s"
         case ..<3600:     return "\(Int(secs / 60))m"
         case ..<86_400:   return "\(Int(secs / 3600))h"
         case ..<604_800:  return "\(Int(secs / 86_400))d"
         default:
             let f = DateFormatter()
-            f.dateFormat = "MMM d"
+            f.locale = Localization.shared.locale
+            f.dateFormat = DateFormatter.dateFormat(
+                fromTemplate: "MMMd", options: 0, locale: f.locale) ?? "MMM d"
             return f.string(from: self)
         }
     }
 
     var clipRelativeLong: String {
         let secs = -timeIntervalSinceNow
-        if secs < 8 { return "Just now" }
+        if secs < 8 { return L("Just now") }
         let f = RelativeDateTimeFormatter()
+        f.locale = Localization.shared.locale
         f.unitsStyle = .full
         return f.localizedString(for: self, relativeTo: Date())
     }

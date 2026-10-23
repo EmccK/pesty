@@ -12,7 +12,26 @@ import Observation
 final class CloudSyncService {
     static let shared = CloudSyncService()
 
-    private(set) var status: String = "Sync is off"
+    /// Machine-readable sync state. Kept separate from the displayed text so a
+    /// language change re-renders the string instead of freezing the wording
+    /// that was current when the state was entered.
+    enum SyncState {
+        case off, on, accountChanged, noAccount, unavailable, checking, retrying
+    }
+
+    private(set) var state: SyncState = .off
+
+    var status: String {
+        switch state {
+        case .off: L("Sync is off")
+        case .on: L("Sync is on")
+        case .accountChanged: L("iCloud account changed - re-enable sync in Settings")
+        case .noAccount: L("Sign in to iCloud in System Settings to sync")
+        case .unavailable: L("iCloud account unavailable — sync paused")
+        case .checking: L("Checking iCloud account…")
+        case .retrying: L("Some items failed to upload - will retry")
+        }
+    }
 
     @ObservationIgnored private var engine: CKSyncEngine?
     @ObservationIgnored private var store: ClipboardStore { ClipboardStore.shared }
@@ -36,17 +55,17 @@ final class CloudSyncService {
         try? FileManager.default.createDirectory(at: systemFieldsDir, withIntermediateDirectories: true,
                                                  attributes: [.posixPermissions: 0o700])
         shadow = loadShadow()
-        let state = loadState()
+        let serialization = loadState()
         let config = CKSyncEngine.Configuration(
             database: CKContainer(identifier: CKSchema.containerID).privateCloudDatabase,
-            stateSerialization: state,
+            stateSerialization: serialization,
             delegate: self)
         let engine = CKSyncEngine(config)
         self.engine = engine
-        if state == nil {
+        if serialization == nil {
             engine.state.add(pendingDatabaseChanges: [.saveZone(CKRecordZone(zoneID: CKSchema.zoneID))])
         }
-        status = "Sync is on"
+        state = .on
         addObservers()
         refreshAccountStatus()
         diffAndEnqueue()
@@ -57,7 +76,7 @@ final class CloudSyncService {
         guard engine != nil else { return }
         removeObservers()
         engine = nil
-        status = "Sync is off"
+        state = .off
     }
 
     /// Manual enable from Settings. Drops the shadow map first so the next
@@ -78,7 +97,7 @@ final class CloudSyncService {
         try? FileManager.default.removeItem(at: stateURL)
         try? FileManager.default.removeItem(at: systemFieldsDir)
         Settings.shared.cloudKitSync = false
-        status = "iCloud account changed - re-enable sync in Settings"
+        state = .accountChanged
     }
 
     private func addObservers() {
@@ -103,13 +122,13 @@ final class CloudSyncService {
             guard engine != nil else { return }
             switch account {
             case .available:
-                status = "Sync is on"
+                state = .on
             case .noAccount:
-                status = "Sign in to iCloud in System Settings to sync"
+                state = .noAccount
             case .restricted, .temporarilyUnavailable:
-                status = "iCloud account unavailable — sync paused"
+                state = .unavailable
             default:
-                status = "Checking iCloud account…"
+                state = .checking
             }
         }
     }
@@ -431,7 +450,7 @@ extension CloudSyncService: CKSyncEngineDelegate {
             }
             if hadRetryableFailure {
                 saveShadow()
-                status = "Some items failed to upload - will retry"
+                state = .retrying
             }
             CKSchema.purgeTempAssets()
 

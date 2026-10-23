@@ -66,13 +66,13 @@ struct NativeBarSearchField: NSViewRepresentable {
         field.isSelectable = true
         field.usesSingleLineMode = true
         field.lineBreakMode = .byTruncatingTail
-        field.placeholderString = "Search"
+        field.placeholderString = L("Search")
         field.font = .systemFont(ofSize: 13, weight: .medium)
         // Matches Theme.chromeTextPrimary (Color.white.opacity(0.95)).
         field.textColor = NSColor.white.withAlphaComponent(0.95)
         let placeholderColor = NSColor.white.withAlphaComponent(0.55)
         field.placeholderAttributedString = NSAttributedString(
-            string: "Search",
+            string: L("Search"),
             attributes: [.foregroundColor: placeholderColor]
         )
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
@@ -85,6 +85,16 @@ struct NativeBarSearchField: NSViewRepresentable {
         bridge.install(field)
         // Reassigning an equal value resets the native caret and selection.
         if field.stringValue != text { field.stringValue = text }
+        // The placeholder is not driven by SwiftUI, so it follows the language
+        // on every update pass instead.
+        let placeholder = L("Search")
+        if field.placeholderString != placeholder {
+            field.placeholderString = placeholder
+            field.placeholderAttributedString = NSAttributedString(
+                string: placeholder,
+                attributes: [.foregroundColor: NSColor.white.withAlphaComponent(0.55)]
+            )
+        }
     }
 
     static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {
