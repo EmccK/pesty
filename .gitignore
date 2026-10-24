@@ -14,5 +14,11 @@ packaging/Pesty.iconset/
 
 *.log
 
+# Local side-by-side screenshots taken while matching another app's design.
+/compare_*.png
+
+# Assistant scratch space (session notes, memory).
+.workbuddy-ai/
+
 packaging/*.pkg
 packaging/*.provisionprofile

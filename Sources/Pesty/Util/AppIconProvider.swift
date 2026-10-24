@@ -35,12 +35,48 @@ enum AppIconProvider {
     /// a muted slate that sits behind white text in both appearances.
     static let neutral = NSColor(srgbRed: 0.35, green: 0.36, blue: 0.40, alpha: 1)
 
+    // MARK: - Warming
+
+    private static var warmQueue: [String] = []
+    private static var isWarming = false
+
+    /// Samples the colors for `bundleIDs` one per main-queue turn.
+    ///
+    /// Sampling one icon costs ~3 ms — the icon has to be rasterized before its
+    /// pixels can vote — so doing it for every card of the first presentation
+    /// stalls the bar as it slides up. Walking the list a turn at a time keeps
+    /// any single frame to a few milliseconds, and the hotkey usually arrives
+    /// long after the queue has drained.
+    static func warmCache(for bundleIDs: [String]) {
+        let queued = Set(warmQueue)
+        for bundleID in Set(bundleIDs) where colorCache[bundleID] == nil && !queued.contains(bundleID) {
+            warmQueue.append(bundleID)
+        }
+        guard !isWarming, !warmQueue.isEmpty else { return }
+        isWarming = true
+        stepWarmQueue()
+    }
+
+    private static func stepWarmQueue() {
+        guard !warmQueue.isEmpty else {
+            isWarming = false
+            return
+        }
+        _ = dominantColor(forBundleID: warmQueue.removeFirst())
+        DispatchQueue.main.async { stepWarmQueue() }
+    }
+
     /// Downsamples the icon and picks its characteristic color.
     ///
     /// A hue histogram weighted by saturation finds a brand color; icons that
     /// are genuinely monochrome (a black logo on white, say) have no saturated
     /// pixels to vote with, so those fall back to the mean of their dark pixels
     /// — which is what makes a black-and-white app's card band read black.
+    ///
+    /// The loop reads raw sRGB bytes and does the HSB arithmetic itself. An
+    /// `NSColor` per pixel — the obvious version — cost ~6 ms per icon, and the
+    /// bar pays this for every source app the first time it is shown, on the
+    /// main thread, mid-animation.
     private static func sample(from image: NSImage) -> NSColor? {
         let side = 32
         guard let rep = NSBitmapImageRep(
@@ -71,33 +107,31 @@ enum AppIconProvider {
         // The band is a vivid brand color, not the average of the icon: keep the
         // most saturated pixel of each hue bucket instead of blending, so a logo
         // with a bright accent on a muted field still reads as that accent.
-        var hueBest = [(color: NSColor, score: Double)?](repeating: nil, count: 24)
+        var hueBest = [HueSample?](repeating: nil, count: 24)
         var darkSum = (r: 0.0, g: 0.0, b: 0.0, weight: 0.0)
 
         for index in stride(from: 0, to: side * side * 4, by: 4) {
             let alpha = Double(data[index + 3]) / 255
             guard alpha > 0.5 else { continue }
-            let color = NSColor(
-                srgbRed: CGFloat(data[index]) / 255,
-                green: CGFloat(data[index + 1]) / 255,
-                blue: CGFloat(data[index + 2]) / 255,
-                alpha: 1
-            )
-            guard let hsb = color.usingColorSpace(.sRGB) else { continue }
-            var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0
-            hsb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+            let r = Double(data[index]) / 255
+            let g = Double(data[index + 1]) / 255
+            let b = Double(data[index + 2]) / 255
+            let pixel = hsb(r, g, b)
 
-            if saturation > 0.30, brightness > 0.18 {
-                let bucket = min(23, Int(hue * 24))
-                let score = Double(saturation) * Double(brightness)
+            if pixel.saturation > 0.30, pixel.brightness > 0.18 {
+                let bucket = min(23, Int(pixel.hue * 24))
+                let score = pixel.saturation * pixel.brightness
                 hueWeights[bucket] += score
                 if hueBest[bucket] == nil || hueBest[bucket]!.score < score {
-                    hueBest[bucket] = (color, score)
+                    hueBest[bucket] = HueSample(hue: pixel.hue,
+                                                saturation: pixel.saturation,
+                                                brightness: pixel.brightness,
+                                                score: score)
                 }
-            } else if brightness < 0.35 {
-                darkSum.r += Double(hsb.redComponent)
-                darkSum.g += Double(hsb.greenComponent)
-                darkSum.b += Double(hsb.blueComponent)
+            } else if pixel.brightness < 0.35 {
+                darkSum.r += r
+                darkSum.g += g
+                darkSum.b += b
                 darkSum.weight += 1
             }
         }
@@ -114,31 +148,62 @@ enum AppIconProvider {
             }
             guard let peak = smoothed.indices.max(by: { smoothed[$0] < smoothed[$1] }),
                   let best = hueBest[peak] else { return nil }
-            return tempered(best.color)
+            return tempered(hue: best.hue,
+                            saturation: best.saturation,
+                            brightness: best.brightness)
         }
 
         if darkSum.weight > pixelCount * 0.10 {
-            let raw = NSColor(
-                srgbRed: CGFloat(darkSum.r / darkSum.weight),
-                green: CGFloat(darkSum.g / darkSum.weight),
-                blue: CGFloat(darkSum.b / darkSum.weight),
-                alpha: 1
-            )
-            return tempered(raw)
+            let mean = hsb(darkSum.r / darkSum.weight,
+                           darkSum.g / darkSum.weight,
+                           darkSum.b / darkSum.weight)
+            return tempered(hue: mean.hue,
+                            saturation: mean.saturation,
+                            brightness: mean.brightness)
         }
         return nil
+    }
+
+    private struct HueSample {
+        let hue: Double
+        let saturation: Double
+        let brightness: Double
+        let score: Double
+    }
+
+    /// Hue in `0..<1`, saturation and brightness in `0...1`, straight from the
+    /// sRGB components — the same values `NSColor.getHue` would report, without
+    /// the object.
+    private static func hsb(_ r: Double, _ g: Double, _ b: Double)
+        -> (hue: Double, saturation: Double, brightness: Double) {
+        let high = max(r, g, b)
+        let low = min(r, g, b)
+        let delta = high - low
+        let brightness = high
+        guard delta > 0, high > 0 else { return (0, 0, brightness) }
+        let saturation = delta / high
+        var hue: Double
+        if high == r {
+            hue = (g - b) / delta
+        } else if high == g {
+            hue = 2 + (b - r) / delta
+        } else {
+            hue = 4 + (r - g) / delta
+        }
+        hue /= 6
+        if hue < 0 { hue += 1 }
+        return (hue, saturation, brightness)
     }
 
     /// Keeps a band vivid enough to read as the app's own color while staying
     /// dark enough for white text: Paste's bands sit between roughly 0.35 and
     /// 0.95 brightness at 0.45 saturation or better.
-    private static func tempered(_ color: NSColor) -> NSColor? {
-        guard let srgb = color.usingColorSpace(.sRGB) else { return nil }
-        var hue: CGFloat = 0, saturation: CGFloat = 0, brightness: CGFloat = 0
-        srgb.getHue(&hue, saturation: &saturation, brightness: &brightness, alpha: nil)
+    private static func tempered(hue: Double,
+                                 saturation: Double,
+                                 brightness: Double) -> NSColor? {
         let clampedSaturation = min(max(saturation, 0.45), 1.0)
         let clampedBrightness = min(max(brightness, 0.32), 0.95)
-        return NSColor(hue: hue,
+        return NSColor(hue: CGFloat(hue),
                        saturation: clampedSaturation,
                        brightness: clampedBrightness,
                        alpha: 1).usingColorSpace(.sRGB)

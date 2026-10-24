@@ -49,11 +49,6 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     private static let showDuration: TimeInterval = 0.22
     private static let hideDuration: TimeInterval = 0.16
 
-    private static var contentBottomExtension: CGFloat {
-        if #available(macOS 26.0, *) { return Theme.cornerRadius }
-        return 0
-    }
-
     init() {
         let panel = BarPanel(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 360),
@@ -80,14 +75,16 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
                 content.leadingAnchor.constraint(equalTo: glassContent.leadingAnchor),
                 content.trailingAnchor.constraint(equalTo: glassContent.trailingAnchor),
                 content.topAnchor.constraint(equalTo: glassContent.topAnchor),
-                content.bottomAnchor.constraint(equalTo: glassContent.bottomAnchor,
-                                                constant: -Theme.cornerRadius),
+                // The glass fills the window exactly: Paste's panel rounds all
+                // four of its own corners, so the glass must draw them in view
+                // instead of parking its lower curve below the window edge.
+                content.bottomAnchor.constraint(equalTo: glassContent.bottomAnchor),
             ])
 
             let glass = NSGlassEffectView()
             glass.contentView = glassContent
             glass.cornerRadius = Theme.cornerRadius
-            glass.tintColor = NSColor.black.withAlphaComponent(0.12)
+            glass.tintColor = Theme.panelGlassTint
             glass.style = .regular
             panel.contentView = glass
             panel.hasShadow = false
@@ -103,6 +100,62 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     }
 
     required init?(coder: NSCoder) { fatalError("init(coder:) unavailable") }
+
+    private var wheelMonitor: Any?
+
+    /// SwiftUI's horizontal `ScrollView` only consumes horizontal scrolling, so
+    /// a plain mouse wheel — vertical by nature — does nothing over the strip.
+    /// Bending the vertical delta onto the strip's axis is what makes a wheel
+    /// scroll the cards the way Paste's does.
+    private func startWheelMonitor() {
+        guard wheelMonitor == nil else { return }
+        wheelMonitor = NSEvent.addLocalMonitorForEvents(matching: .scrollWheel) { [weak self] event in
+            guard let self, event.window === self.window else { return event }
+            return self.translateVerticalWheel(event) ? nil : event
+        }
+    }
+
+    private func stopWheelMonitor() {
+        guard let wheelMonitor else { return }
+        NSEvent.removeMonitor(wheelMonitor)
+        self.wheelMonitor = nil
+    }
+
+    private func translateVerticalWheel(_ event: NSEvent) -> Bool {
+        let deltaX = event.scrollingDeltaX
+        let deltaY = event.scrollingDeltaY
+        // Horizontal swipes, and gestures that are already moving the strip,
+        // are left alone.
+        guard deltaY != 0, abs(deltaY) > abs(deltaX) else { return false }
+        guard let scrollView = horizontalScrollView(at: event.locationInWindow),
+              let document = scrollView.documentView else { return false }
+
+        let clip = scrollView.contentView
+        let limit = max(0, document.frame.width - clip.bounds.width)
+        guard limit > 0 else { return false }
+
+        // A notched wheel reports lines; a trackpad reports points.
+        let step = event.hasPreciseScrollingDeltas ? deltaY : deltaY * 24
+        let target = min(max(0, clip.bounds.origin.x - step), limit)
+        guard target != clip.bounds.origin.x else { return false }
+
+        clip.scroll(to: NSPoint(x: target, y: clip.bounds.origin.y))
+        scrollView.reflectScrolledClipView(clip)
+        return true
+    }
+
+    /// The strip's own scroll view, found by hit-testing what is under the
+    /// pointer so wheel events over the top bar or the toolbar keep their
+    /// normal behaviour.
+    private func horizontalScrollView(at windowPoint: NSPoint) -> NSScrollView? {
+        guard let content = window?.contentView else { return nil }
+        var view = content.hitTest(content.convert(windowPoint, from: nil))
+        while let current = view {
+            if let scrollView = current as? NSScrollView { return scrollView }
+            view = current.superview
+        }
+        return nil
+    }
 
     /// The screen the bar should slide up from: the one under the pointer.
     ///
@@ -168,8 +221,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         // flew across the bezel. A view clipped to the window can never escape it.
         panel.setFrame(onScreen, display: false)
         guard let content = panel.contentView else { return }
-        let bottomExtension = Self.contentBottomExtension
-        let contentHeight = height + bottomExtension
+        let contentHeight = height
         content.autoresizingMask = []
         content.frame = NSRect(x: 0, y: -contentHeight,
                                width: onScreen.width, height: contentHeight)
@@ -179,6 +231,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
 
         NSApp.activate(ignoringOtherApps: true)
         panel.makeKeyAndOrderFront(nil)
+        startWheelMonitor()
 
         let finish: @MainActor @Sendable () -> Void = { [weak self] in
             guard let self else { return }
@@ -197,8 +250,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
             ctx.duration = Self.showDuration
             ctx.timingFunction = CAMediaTimingFunction(name: .easeOut)
             content.animator().frame = BarResizeGeometry.presentedContentFrame(
-                panelSize: onScreen.size,
-                bottomExtension: bottomExtension
+                panelSize: onScreen.size
             )
         }, completionHandler: { DispatchQueue.main.async(execute: finish) })
         DispatchQueue.main.asyncAfter(deadline: .now() + Self.showDuration + 0.05, execute: finish)
@@ -207,6 +259,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     func hide() {
         guard let panel = window, let content = panel.contentView else { return }
         guard isPresented else { return }
+        stopWheelMonitor()
         cancelBarResize()
 
         let token = beginTransition()
@@ -233,6 +286,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
     /// Used after sleep or a display change, where an in-flight transition can be
     /// left stranded on a screen that no longer exists.
     func forceHide() {
+        stopWheelMonitor()
         resizeSession = nil
         _ = beginTransition()
         phase = .hidden
@@ -301,8 +355,7 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
               frame.width > 0, frame.height > 0 else { return }
         panel.setFrame(frame, display: true)
         content.frame = BarResizeGeometry.presentedContentFrame(
-            panelSize: frame.size,
-            bottomExtension: Self.contentBottomExtension
+            panelSize: frame.size
         )
     }
 

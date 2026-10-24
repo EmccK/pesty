@@ -50,10 +50,17 @@ struct ClipCardView: View {
         .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
         .scaleEffect(hovering && !selected ? 1.02 : 1.0)
         .zIndex(selected ? 1 : 0)
-        .animation(.spring(response: 0.32, dampingFraction: 0.72), value: selected)
+        // Selection has to land on the click, not drift in: a 0.32 s spring
+        // made the ring fade up over half a second, which reads as the bar
+        // being slow to acknowledge a click.
+        .animation(.easeOut(duration: 0.1), value: selected)
         .animation(.easeOut(duration: 0.14), value: hovering)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
+        // Double-click pastes, single click selects. The single tap has to stay a
+        // plain tap gesture behind the double-click one: selecting on the first
+        // click would let `scrollToSelected` slide the card out from under the
+        // second click, and the double-click would never complete.
         .onTapGesture(count: 2) { AppController.shared.pasteItem(item) }
         .onTapGesture { store.select(item.id) }
         .highPriorityGesture(TapGesture().modifiers(.shift).onEnded { store.extendSelection(to: item.id) })

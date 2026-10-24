@@ -25,8 +25,24 @@ All notable changes to Pesty are documented here. The format is based on
   top carries a solid band colored from the source app icon's dominant color,
   with the card type and age on the left and the app icon filling the band's
   right end, the content below, and a single centered metadata line along the
-  bottom. Cards measure 251 pt square with 24 pt gaps at the default bar height,
+  bottom. Cards measure 262 pt square with 21 pt gaps at the default bar height,
   14 pt corners, and a 4 pt selection ring in the system accent blue.
+- The bar floats the way Paste's panel does instead of sitting flush against the
+  screen: 8 pt of desktop shows along the left, right, and bottom edges, all four
+  corners round at 24 pt, and the glass fills the window so those corners are
+  drawn in view rather than parked below the window edge. Search and the pinboard
+  pills sit centered between the edge actions.
+- Light-mode glass carries no tint, which lands the panel on the same color Paste
+  renders over both a colored wallpaper and a light backdrop.
+- Pasting an image writes the stored PNG straight to the pasteboard instead of
+  decoding and re-encoding it, and the target app is activated before the write
+  so the app switch overlaps it rather than stacking after it. Apps that only
+  read `public.tiff` still get a TIFF, but it is encoded lazily on request, so a
+  large screenshot no longer stalls the bar while it hides.
+- A plain mouse wheel now scrolls the strip. A horizontal `ScrollView` only
+  consumes horizontal deltas, so a wheel — which is vertical by nature — did
+  nothing over the cards; its delta is bent onto the strip's axis while the
+  pointer is over it, and left alone everywhere else in the bar.
 - The bar resizes the way Paste's does: its whole top edge is draggable (the
   pointer becomes a resize cursor, Escape cancels mid-drag), and the card size
   follows the bar height between 150 and 320 pt. The Settings toggle now only

@@ -5,9 +5,10 @@ enum Theme {
     /// so the side follows the space the strip has rather than a fixed width.
     static let cardMinSide: CGFloat = 150
     static let cardMaxSide: CGFloat = 320
-    static let cardSpacing: CGFloat = 24
-    /// Corner radius of the bar surface itself.
-    static let cornerRadius: CGFloat = 16
+    static let cardSpacing: CGFloat = 21
+    /// Corner radius of the bar surface itself. Measured off Paste's own
+    /// panel: 24 pt, visibly rounder than the previous 16.
+    static let cornerRadius: CGFloat = 24
     /// Paste's card corners measure 14 pt off the colored header band.
     static let cardCorner: CGFloat = 14
     static let fileIconSize: CGFloat = 64
@@ -23,12 +24,12 @@ enum Theme {
     static let cardContentTopInset: CGFloat = 10
     static let cardContentBottomInset: CGFloat = 28
     /// Chrome rows of the bar itself, used to work out how much room the strip
-    /// has for its square cards. Measured off Paste's 337 pt bar: the pill row
-    /// sits 48 pt tall, the cards start 60 pt down, and the card bottoms rest
-    /// 22 pt above the panel's lower edge.
+    /// has for its square cards. Measured off Paste's own bar: the pill row
+    /// sits 48 pt tall and the cards start 60 pt down.
     static let topBarHeight: CGFloat = 48
     static let stripTopPadding: CGFloat = 12
-    static let stripBottomPadding: CGFloat = 22
+    /// Measured off Paste: cards rest ~27 pt above the panel's bottom edge.
+    static let stripBottomPadding: CGFloat = 27
 
     // MARK: - Adaptive palette
     //
@@ -53,16 +54,32 @@ enum Theme {
     static let panelTint = dynamic(dark: NSColor.white.withAlphaComponent(0.10),
                                    light: NSColor.white.withAlphaComponent(0.22))
 
+    /// Tint handed to the macOS 26 `NSGlassEffectView`.
+    ///
+    /// Paste's light glass carries no tint. Dividing the old 12 % black tint
+    /// back out of Pesty's measured light panel lands exactly on Paste's
+    /// rgb(255, 157, 255) over the purple wallpaper, and Paste's panel follows
+    /// light backdrops (rgb(246, 243, 246) over white) the same way clear
+    /// glass does. Dark mode keeps the tint so the calibrated dark wash in
+    /// `panelWash` below still composites over the same base.
+    static let panelGlassTint = NSColor(name: nil) { appearance in
+        let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
+        return isDark ? NSColor.black.withAlphaComponent(0.12) : .clear
+    }
+
     /// Wash drawn over the macOS 26 glass panel.
     ///
     /// Glass alone leaves the bar far too transparent: over a black backdrop it
     /// renders rgb(41) where Paste renders rgb(58), and it keeps climbing with
     /// the backdrop instead of flattening out. Measured against calibrated
     /// backdrops, Paste's dark bar fits `panel = 0.043 × backdrop + 58`, so this
-    /// wash pins a near-flat mid-gray on the same curve. Light mode already
-    /// matches through the glass alone, hence `.clear`.
+    /// wash pins a near-flat mid-gray on the same curve. In light mode the
+    /// clear-tinted glass already matches Paste on both calibration backdrops —
+    /// rgb(255, 157, 255) over the purple wallpaper and rgb(246, 243, 246) over
+    /// a light one — so the light wash stays clear and keeps the panel
+    /// translucent the way Paste's is.
     static let panelWash = dynamic(dark: NSColor(white: 0.275, alpha: 0.82),
-                                   light: NSColor.clear)
+                                   light: .clear)
 
     /// The card body under the band. Paste's banded cards sit on plain white in
     /// light mode (its older floating-header cards used 245), so the content
@@ -74,9 +91,10 @@ enum Theme {
     static let selection = Color(red: 0, green: 0.478, blue: 1)
     /// Paste's ring is a 4 pt capsule behind the card, not a wide halo.
     static let selectedCardRing: CGFloat = 4
-    // Leave 43 pt beyond the selected-card ring at either strip edge while
-    // preserving the ScrollView's normal clipping behavior.
-    static let cardStripHorizontalPadding: CGFloat = selectedCardRing + 43
+    // Paste aligns its first card with the toolbar content: both sit 18 pt
+    // off the panel edge, with the selected-card ring extra so a selected
+    // edge card never clips against the ScrollView boundary.
+    static let cardStripHorizontalPadding: CGFloat = selectedCardRing + 14
 
     static let chromeTextPrimary = dynamic(dark: NSColor.white.withAlphaComponent(0.95),
                                            light: NSColor.black.withAlphaComponent(0.85))

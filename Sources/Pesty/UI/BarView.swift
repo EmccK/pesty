@@ -17,6 +17,11 @@ struct BarView: View {
     }
 
     var body: some View {
+        panelLayers
+            .ignoresSafeArea()
+    }
+
+    private var panelLayers: some View {
         ZStack {
             panelBackground
         }
@@ -38,8 +43,8 @@ struct BarView: View {
                 onCancel: AppController.shared.cancelBarResize,
                 onAccessibilityAdjustment: AppController.shared.adjustBarHeight)
         }
-        .clipShape(RoundedCorners(radius: Theme.cornerRadius, corners: [.topLeft, .topRight]))
-        .ignoresSafeArea()
+        .clipShape(RoundedCorners(radius: Theme.cornerRadius,
+                                  corners: [.topLeft, .topRight, .bottomLeft, .bottomRight]))
     }
 
     @ViewBuilder
@@ -64,6 +69,10 @@ struct BarView: View {
             #else
             if settings.iCloudSync { syncButton }
             #endif
+            // Paste parks search + pinboards mid-bar: equal spacers keep the
+            // cluster centered between the edge actions, and PinboardTabs
+            // shrinks to its pill row so the whole cluster centers as one.
+            Spacer(minLength: 8)
             searchIndicator
             PinboardTabs()
                 .layoutPriority(1)
@@ -204,18 +213,9 @@ struct BarView: View {
     /// leading edge instead would scroll the horizontal inset out of view.
     private static let stripStartID = "stripStart"
 
-    /// On macOS 26 the glass panel extends below the visible bar so its rounded
-    /// bottom corners have material to draw; that strip of extra height must not
-    /// count as card room, or every card comes out one corner radius too tall.
-    private static var panelBottomExtension: CGFloat {
-        if #available(macOS 26.0, *) { return Theme.cornerRadius }
-        return 0
-    }
-
     private var strip: some View {
         GeometryReader { geometry in
-            let side = Self.cardSide(forStripHeight: geometry.size.height,
-                                     bottomExtension: Self.panelBottomExtension)
+            let side = Self.cardSide(forStripHeight: geometry.size.height)
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: Theme.cardSpacing) {
@@ -262,16 +262,19 @@ struct BarView: View {
 
     /// Paste's cards are square and sized from the room the strip has: the bar
     /// can be dragged taller and the cards grow with it.
-    static func cardSide(forStripHeight height: CGFloat, bottomExtension: CGFloat = 0) -> CGFloat {
-        let available = height - bottomExtension - Theme.stripTopPadding - Theme.stripBottomPadding
+    static func cardSide(forStripHeight height: CGFloat) -> CGFloat {
+        let available = height - Theme.stripTopPadding - Theme.stripBottomPadding
         guard available.isFinite, available > 0 else { return Theme.cardMinSide }
         return min(Theme.cardMaxSide, max(Theme.cardMinSide, available))
     }
 
     /// The anchor preference decides whether the strip parks the selected
     /// card centered or against the right edge, Paste-style.
+    ///
+    /// A plain ease, not a spring: the strip is only keeping the selection in
+    /// view, so an overshoot reads as the bar wobbling after every click.
     private func scrollToSelected(_ id: UUID, proxy: ScrollViewProxy) {
-        withAnimation(.spring(response: 0.3, dampingFraction: 0.78)) {
+        withAnimation(.easeOut(duration: 0.2)) {
             proxy.scrollTo(id, anchor: settings.selectedClipPosition == .rightEdge ? .trailing : .center)
         }
     }

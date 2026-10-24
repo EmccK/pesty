@@ -2,6 +2,10 @@ import SwiftUI
 
 struct PinboardTabs: View {
     @Bindable private var store = ClipboardStore.shared
+    // Width of the pill row itself, nil until measured. Capping the scroll
+    // view at it lets the bar center search + pills as one cluster; a longer
+    // row is capped by the proposal instead and keeps scrolling.
+    @State private var pillRowWidth: CGFloat?
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
@@ -40,6 +44,17 @@ struct PinboardTabs: View {
                 .buttonStyle(.plain)
                 .help(L("New Pinboard"))
             }
+            .fixedSize()
+            .background(rowWidthReader)
+        }
+        .frame(maxWidth: pillRowWidth)
+    }
+
+    private var rowWidthReader: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { pillRowWidth = proxy.size.width }
+                .onChange(of: proxy.size.width) { _, width in pillRowWidth = width }
         }
     }
 
