@@ -218,6 +218,11 @@ private struct GeneralSettings: View {
                 Text(settings.selectedClipPosition.detail)
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Toggle(L("Animate long jumps"), isOn: $settings.animatesStripScroll)
+                    .toggleStyle(.switch)
+                Text(L("Scrolls a distant clip into view over a short animation. Turn off to have the strip jump straight to it."))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
 
             #if MAS

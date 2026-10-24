@@ -11,6 +11,66 @@ final class BarPanel: NSPanel {
         }
         return super.performKeyEquivalent(with: event)
     }
+
+    /// The first place a click can be observed, before SwiftUI's gesture
+    /// recognizers see it.
+    ///
+    /// Selection is handled here rather than with a tap gesture because a
+    /// single tap sharing a view with `onTapGesture(count: 2)` cannot fire
+    /// until the system double-click interval expires — measured as a 350 ms
+    /// gap between mouse-up and the selection. `NSEvent.clickCount` settles
+    /// the question immediately: 1 selects, 2 pastes.
+    override func sendEvent(_ event: NSEvent) {
+        guard event.type == .leftMouseDown else {
+            super.sendEvent(event)
+            return
+        }
+        // Anything the strip does not claim — a search field, the pinboard
+        // row, the traffic-button area — must keep its normal behaviour, so
+        // only a click that lands on a card is consumed.
+        guard let clipID = BarClickRouter.shared.clipID(atWindowPoint: windowPoint(of: event)) else {
+            super.sendEvent(event)
+            return
+        }
+
+        let store = ClipboardStore.shared
+        guard let item = store.visibleItems.first(where: { $0.id == clipID }) else {
+            super.sendEvent(event)
+            return
+        }
+
+        // Control-click and right-click belong to the context menu, and the
+        // drag source needs the event to begin a drag at all.
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        if flags.contains(.control) || flags.contains(.shift) || flags.contains(.command) {
+            super.sendEvent(event)
+            return
+        }
+
+        if event.clickCount >= 2 {
+            store.select(clipID)
+            AppController.shared.pasteItem(item)
+            return
+        }
+
+        store.select(clipID)
+
+        // The event still goes through so `ScrollView` keeps its own gesture
+        // state; the selection has already landed, which is the part that was
+        // being waited on.
+        super.sendEvent(event)
+    }
+
+    /// The event's location in the same space `CardSlotReporter` publishes.
+    ///
+    /// SwiftUI's `.global` space for a view inside a window places the origin at
+    /// the window's top left with y growing downward; `locationInWindow` uses
+    /// AppKit's bottom-left origin with y growing upward. Flipping here keeps a
+    /// single conversion in one place instead of asking the layout again.
+    private func windowPoint(of event: NSEvent) -> CGPoint {
+        CGPoint(x: event.locationInWindow.x,
+                y: frame.height - event.locationInWindow.y)
+    }
 }
 
 @MainActor
@@ -350,10 +410,15 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
         Settings.shared.barHeight = Double(frame.height)
     }
 
+    /// `display: false` while a drag is in flight: the live resize session
+    /// calls this for every pointer sample, and asking AppKit to flush the
+    /// window and its SwiftUI-hosted content synchronously each time is what
+    /// made the bar drag behind the pointer. The final frame is drawn by the
+    /// next run-loop turn, and a discrete keyboard step still coalesces fine.
     private func applyResizeFrame(_ frame: NSRect) {
         guard let panel = window, let content = panel.contentView,
               frame.width > 0, frame.height > 0 else { return }
-        panel.setFrame(frame, display: true)
+        panel.setFrame(frame, display: false)
         content.frame = BarResizeGeometry.presentedContentFrame(
             panelSize: frame.size
         )

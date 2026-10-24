@@ -43,6 +43,13 @@ final class ClipboardStore {
     private(set) var multiSelectedIDs: Set<UUID> = []
     private var selectionAnchorID: UUID?
 
+    /// Set while the user is arrowing through the strip. Keyboard moves arrive
+    /// faster than a 0.2 s scroll tween can finish, so the strip jumps instead
+    /// of queueing overlapping animations while this is true; a click or a
+    /// presentation reset clears it and gets the smooth scroll back.
+    private(set) var isFastSelectionRun = false
+    private var fastSelectionReset: DispatchWorkItem?
+
     /// Bumped every time the bar is about to present. The hosting view is
     /// built once and cached, so the strip keeps its scroll offset across
     /// hide/show; selection alone cannot reset it because the newest clip is
@@ -102,6 +109,13 @@ final class ClipboardStore {
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDir.path)
     }
 
+    /// The strip reads this several times per layout pass (the list, the
+    /// animation key, the empty state, the selection index), and the search
+    /// path runs a substring test over every clip. It is computed on demand —
+    /// caching it would need an invalidation hook on every mutation of
+    /// `history`, `pinboards`, `source` and `searchText`, which is a worse
+    /// trade than the read itself: the per-item work is now a stored-string
+    /// lookup instead of five rebuilt strings.
     var visibleItems: [ClipItem] {
         let base: [ClipItem]
         switch source {
@@ -112,7 +126,7 @@ final class ClipboardStore {
         }
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         guard !q.isEmpty else { return base }
-        return base.filter { $0.searchableText.contains(q) }
+        return base.filter { $0.searchTextLowercased.contains(q) }
     }
 
     var selectedItem: ClipItem? {
@@ -125,6 +139,7 @@ final class ClipboardStore {
             if item.imageFileName != history[idx].imageFileName { deleteImageFile(item) }
             var existing = history.remove(at: idx)
             existing.createdAt = item.createdAt
+            existing.refreshDerivedState()
             history.insert(existing, at: 0)
             if source == .history && searchText.isEmpty && multiSelectedIDs.isEmpty {
                 selectedID = existing.id
@@ -463,6 +478,7 @@ final class ClipboardStore {
             var updated = transform(history[i])
             if updated != history[i] {
                 updated.createdAt = now
+                updated.refreshDerivedState()
                 history.remove(at: i)
                 removeContentDuplicates(of: updated, in: &history)
                 history.insert(updated, at: 0)
@@ -475,6 +491,7 @@ final class ClipboardStore {
             var updated = transform(pinboards[b].items[i])
             if updated != pinboards[b].items[i] {
                 updated.createdAt = now
+                updated.refreshDerivedState()
                 pinboards[b].items[i] = updated
                 removeContentDuplicates(of: updated, in: &pinboards[b].items)
                 changed = true
@@ -508,10 +525,14 @@ final class ClipboardStore {
     }
 
     func setTitle(_ title: String, for item: ClipItem) {
-        if let i = history.firstIndex(where: { $0.id == item.id }) { history[i].customTitle = title }
+        if let i = history.firstIndex(where: { $0.id == item.id }) {
+            history[i].customTitle = title
+            history[i].refreshDerivedState()
+        }
         for b in pinboards.indices {
             if let i = pinboards[b].items.firstIndex(where: { $0.id == item.id }) {
                 pinboards[b].items[i].customTitle = title
+                pinboards[b].items[i].refreshDerivedState()
             }
         }
         scheduleSave()
@@ -524,12 +545,28 @@ final class ClipboardStore {
         return selectedID.map { [$0] } ?? []
     }
 
+    /// Position of `id` in the strip, for the ⌘1-⌘9 quick-paste hint.
+    /// Returns a value past the hint range when the clip is not visible, so the
+    /// hint simply does not render.
+    func visibleIndex(of id: UUID) -> Int {
+        visibleItems.firstIndex(where: { $0.id == id }) ?? Int.max
+    }
+
     func isSelected(_ id: UUID) -> Bool {
         if multiSelectedIDs.isEmpty { return selectedID == id }
         return multiSelectedIDs.contains(id)
     }
 
     func select(_ id: UUID) {
+        // One-click select has to be a no-op when it changes nothing. Clicking
+        // an already-selected card used to write the same value back through
+        // `@Observable`, which still invalidates every reader that asks for the
+        // selection — the whole strip, since each card asks.
+        let alreadyOnlySelection = selectedID == id
+            && multiSelectedIDs.isEmpty
+            && selectionAnchorID == id
+        isFastSelectionRun = false
+        guard !alreadyOnlySelection else { return }
         selectedID = id
         selectionAnchorID = id
         multiSelectedIDs = []
@@ -604,6 +641,20 @@ final class ClipboardStore {
         let next = max(0, min(items.count - 1, idx + delta))
         selectedID = items[next].id
         selectionAnchorID = selectedID
+        beginFastSelectionRun()
+    }
+
+    /// Starts (or extends) the window where scroll requests snap rather than
+    /// animate, so a held arrow key produces one visible move instead of a
+    /// pile of half-finished ones.
+    private func beginFastSelectionRun() {
+        isFastSelectionRun = true
+        fastSelectionReset?.cancel()
+        let reset = DispatchWorkItem { [weak self] in
+            self?.isFastSelectionRun = false
+        }
+        fastSelectionReset = reset
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: reset)
     }
 
     func imageURL(for item: ClipItem) -> URL? {
@@ -657,7 +708,22 @@ final class ClipboardStore {
               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
         history = snap.history
         pinboards = snap.pinboards
+        // Decoded clips carry empty derived fields: they are neither stored nor
+        // compared, so the whole library has to be rebuilt once on load.
+        refreshAllDerivedState()
         selectFirst()
+    }
+
+    /// Rebuilds the per-clip caches for every clip. Runs once after a decode,
+    /// where none of them survived, and never on a render path.
+    private func refreshAllDerivedState() {
+        let now = Date()
+        for i in history.indices { history[i].refreshDerivedState(now: now) }
+        for b in pinboards.indices {
+            for i in pinboards[b].items.indices {
+                pinboards[b].items[i].refreshDerivedState(now: now)
+            }
+        }
     }
 
     private func scheduleSave() {
@@ -757,7 +823,10 @@ final class ClipboardStore {
             history.remove(at: dupIdx)
             deleteImageFile(dup)
         }
-        insertSortedByDate(item, into: &history)
+        // Decoded from a sync record: no derived fields travelled with it.
+        var incoming = item
+        incoming.refreshDerivedState()
+        insertSortedByDate(incoming, into: &history)
         retentionPrunedRecordNames.remove(item.id.uuidString)
         // Same-id replace: drop the old image file unless something still uses it.
         for old in replaced { deleteImageFile(old) }
@@ -785,7 +854,9 @@ final class ClipboardStore {
             pinboards[i].items.remove(at: dupIdx)
             deleteImageFile(dup)
         }
-        insertSortedByDate(item, into: &pinboards[i].items)
+        var incoming = item
+        incoming.refreshDerivedState()
+        insertSortedByDate(incoming, into: &pinboards[i].items)
         retentionPrunedRecordNames.remove(item.id.uuidString)
         // Same-id replace: drop the old image file unless something still uses it.
         for old in replaced { deleteImageFile(old) }
@@ -850,18 +921,22 @@ final class ClipboardStore {
         var byID: [UUID: Pinboard] = Dictionary(uniqueKeysWithValues: pinboards.map { ($0.id, $0) })
         for b in snap.pinboards {
             if var existing = byID[b.id] {
-                for it in b.items where !existing.items.contains(where: { $0.sameContent(as: it) }) {
+                for var it in b.items where !existing.items.contains(where: { $0.sameContent(as: it) }) {
+                    it.refreshDerivedState()
                     existing.items.append(it)
                 }
                 byID[b.id] = existing
             } else {
-                byID[b.id] = b
+                var board = b
+                for i in board.items.indices { board.items[i].refreshDerivedState() }
+                byID[b.id] = board
             }
         }
         pinboards = pinboards.map { byID[$0.id] ?? $0 }
             + byID.values.filter { b in !pinboards.contains(where: { $0.id == b.id }) }
 
         combined.removeAll()
+        refreshAllDerivedState()
         selectFirst()
         if history.count != before || !snap.history.isEmpty { saveNow() }
     }

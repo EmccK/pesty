@@ -5,6 +5,17 @@ struct BarView: View {
     @Bindable private var store = ClipboardStore.shared
     @Bindable private var settings = Settings.shared
 
+    /// Strip geometry, published once per size change. The "is this card on
+    /// screen" test needs both, and reading them out of the live layout from a
+    /// click handler would trade one layout pass for another.
+    @State private var stripVisibleWidth: CGFloat?
+    @State private var cardSide: CGFloat = Theme.cardMinSide
+    /// The strip's scroll view, captured by `StripScrollViewProbe`. Weak is not
+    /// enough — SwiftUI rebuilds the hierarchy freely — but holding it strongly
+    /// would keep the view alive past the bar's teardown, so the probe hands it
+    /// over and clears the reference when it leaves the hierarchy.
+    @State private var stripScrollView: NSScrollView?
+
     private var searchIsActive: Bool {
         store.barInputMode == .search || !store.searchText.isEmpty
     }
@@ -147,6 +158,10 @@ struct BarView: View {
         // below its intended width — an active query needs to keep its
         // requested width over the (infinitely flexible) tab strip.
         .layoutPriority(searchIsActive ? 2 : 0)
+        // Scoped to the field. The same `.animation(value:)` placed on an
+        // ancestor would turn every geometry change in this subtree — the pill
+        // row's measured width, a card growing with the bar — into an animated
+        // one, and each of those then re-triggers the measurement.
         .animation(.easeOut(duration: 0.15), value: searchIsActive)
     }
 
@@ -213,18 +228,40 @@ struct BarView: View {
     /// leading edge instead would scroll the horizontal inset out of view.
     private static let stripStartID = "stripStart"
 
+    /// Coordinate space the cards report their frames in: the scroll view's
+    /// own content space, so a frame's `minX` moves as the strip scrolls and
+    /// `0...stripWidth` is the visible window.
+    static let stripSpace = "pestyStripSpace"
+
     private var strip: some View {
         GeometryReader { geometry in
             let side = Self.cardSide(forStripHeight: geometry.size.height)
+            let _ = publishStripGeometry(width: geometry.size.width, side: side)
+            // Square cards of `side` need `side + paddings` of strip height.
+            // The scroll view used to size itself to the taller of that and
+            // the row's measured intrinsic width-driven height; here the
+            // height is stated once and never re-measured.
+            let rowHeight = side + Theme.stripTopPadding + Theme.stripBottomPadding
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: Theme.cardSpacing) {
-                        ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
-                            ClipCardView(item: item,
-                                         index: index,
-                                         selected: store.isSelected(item.id),
-                                         side: side)
+                        // A `ForEach` over the snapshot: the previous shape
+                        // built `Array(enumerated())` and asked
+                        // `isSelected` per card inside the loop, so every
+                        // selection change re-diffed the whole strip and
+                        // re-evaluated the view body of every visible card.
+                        // `ClipCardView` reads the selection itself now, which
+                        // keeps the strip's own body out of that path.
+                        ForEach(store.visibleItems, id: \.id) { item in
+                            ClipCardView(item: item, side: side)
                                 .id(item.id)
+                                .background {
+                                    // Reports the card's rectangle in content
+                                    // space so the window-level click router can
+                                    // answer "which clip is under the pointer"
+                                    // without asking the layout mid-click.
+                                    CardSlotReporter(id: item.id, side: side)
+                                }
                                 .transition(.asymmetric(
                                     insertion: .scale(scale: 0.92).combined(with: .opacity),
                                     removal: .opacity))
@@ -235,10 +272,21 @@ struct BarView: View {
                     .padding(.bottom, Theme.stripBottomPadding)
                     // Paste hangs its cards from the top bar; without this the
                     // scroll view centers a shorter-than-viewport strip.
-                    .frame(maxHeight: .infinity, alignment: .top)
-                    .animation(.spring(response: 0.34, dampingFraction: 0.8), value: store.visibleItems.count)
+                    .frame(height: rowHeight, alignment: .top)
+                    // Keyed on the ids, not the count: an insertion at the
+                    // head and a trim at the tail leave the count unchanged,
+                    // and the strip still needs its layout transition. Keying
+                    // on the array also stops an unchanged strip from being
+                    // re-animated when only selection moved.
+                    .animation(.spring(response: 0.34, dampingFraction: 0.8),
+                               value: store.visibleItems.map(\.id))
                     .id(Self.stripStartID)
                 }
+                // The scroll view itself, so the probe can find it and the
+                // click path can read the live clip view offset.
+                .background(StripScrollViewProbe { scrollView in
+                    stripScrollView = scrollView
+                })
                 .onChange(of: store.barPresentationToken) { _, _ in
                     var transaction = Transaction()
                     transaction.disablesAnimations = true
@@ -246,18 +294,34 @@ struct BarView: View {
                         proxy.scrollTo(Self.stripStartID, anchor: .leading)
                     }
                 }
-                .onChange(of: store.selectedID) { _, id in
-                    guard let id else { return }
-                    scrollToSelected(id, proxy: proxy)
+                .onChange(of: store.selectedID) { old, new in
+                    guard let new else { return }
+                    selectionDidMove(from: old, to: new, proxy: proxy)
                 }
                 .onChange(of: settings.selectedClipPosition) { _, _ in
+                    // The user just changed the policy: always honour it, even
+                    // in the "don't scroll" mode, so switching back to a
+                    // centering mode visibly re-parks the strip.
                     guard let id = store.selectedID else { return }
-                    scrollToSelected(id, proxy: proxy)
+                    scrollTo(id, proxy: proxy, animated: true)
                 }
                 .overlay { if store.visibleItems.isEmpty { emptyState } }
             }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// Publishes strip geometry only when it actually changes, so a resize
+    /// drag does not write `@State` on every frame.
+    private func publishStripGeometry(width: CGFloat, side: CGFloat) {
+        let roundedWidth = width.rounded()
+        let roundedSide = side.rounded()
+        if stripVisibleWidth != roundedWidth {
+            stripVisibleWidth = roundedWidth
+        }
+        if cardSide != roundedSide {
+            cardSide = roundedSide
+        }
     }
 
     /// Paste's cards are square and sized from the room the strip has: the bar
@@ -268,14 +332,82 @@ struct BarView: View {
         return min(Theme.cardMaxSide, max(Theme.cardMinSide, available))
     }
 
-    /// The anchor preference decides whether the strip parks the selected
-    /// card centered or against the right edge, Paste-style.
+    /// Decides whether a selection change moves the strip, and how.
     ///
-    /// A plain ease, not a spring: the strip is only keeping the selection in
-    /// view, so an overshoot reads as the bar wobbling after every click.
-    private func scrollToSelected(_ id: UUID, proxy: ScrollViewProxy) {
-        withAnimation(.easeOut(duration: 0.2)) {
-            proxy.scrollTo(id, anchor: settings.selectedClipPosition == .rightEdge ? .trailing : .center)
+    /// Two questions are answered separately:
+    ///
+    /// 1. *Should the strip move at all?* In `keepVisible` it only moves for a
+    ///    clip that is not already on screen — clicking through the visible row
+    ///    leaves the strip perfectly still under the pointer. In the centering
+    ///    modes every selection re-parks the strip, which is what made a click
+    ///    on a side card slide the whole row.
+    /// 2. *How far?* A selection that moved by one step (an arrow key, or a
+    ///    click on the neighbouring card) should nudge the strip, not cause it
+    ///    to sprint across the row. Both modes therefore ask for the smallest
+    ///    scroll that satisfies the anchor instead of a full re-centre.
+    private func selectionDidMove(from old: UUID?, to new: UUID, proxy: ScrollViewProxy) {
+        guard settings.selectedClipPosition.centersOnEverySelection else {
+            // "Don't scroll": the card is already on screen in the overwhelming
+            // majority of clicks, and a no-op scroll is still a layout pass.
+            guard !isOnScreen(new) else { return }
+            scrollTo(new, proxy: proxy, animated: true)
+            return
+        }
+        _ = old
+        scrollTo(new, proxy: proxy, animated: !store.isFastSelectionRun)
+    }
+
+    /// True when the card sits wholly inside the strip's visible window.
+    ///
+    /// Both sides come from the same place: the router records each realized
+    /// card's rectangle in window coordinates, and the clip view reports the
+    /// window rectangle it is showing. The strip used to recompute a card's
+    /// position from its index and compare it against a scroll offset, which
+    /// made two independent derivations of "where is this card" that could —
+    /// and did — disagree.
+    ///
+    /// A card peeking in from either edge is *not* on screen: it still needs
+    /// the scroll that brings it fully into view, or the selection stays cut
+    /// off. When the router has no rectangle for the id the answer is false,
+    /// which sends the caller down the ordinary scroll path rather than
+    /// guessing.
+    private func isOnScreen(_ id: UUID) -> Bool {
+        guard let slot = BarClickRouter.shared.slot(for: id),
+              let scrollView = stripScrollView,
+              let window = scrollView.contentView.window else { return false }
+        // The clip view's own frame is the visible window, in the same
+        // coordinate space the router recorded the card in.
+        let clip = scrollView.contentView
+        let visible = clip.convert(clip.bounds, to: nil)
+        let windowRect = CGRect(x: visible.minX,
+                                y: window.frame.height - visible.maxY,
+                                width: visible.width,
+                                height: visible.height)
+        // A card flush against either edge is on screen. Comparing raw floats
+        // made a card whose sub-pixel alignment put its edge 0.4 pt outside the
+        // clip bounds read as off screen, costing every such click a scroll.
+        let tolerance: CGFloat = 1
+        return slot.globalFrame.minX >= windowRect.minX - tolerance
+            && slot.globalFrame.maxX <= windowRect.maxX + tolerance
+    }
+
+    private func scrollTo(_ id: UUID, proxy: ScrollViewProxy, animated: Bool) {
+        let anchor: UnitPoint = settings.selectedClipPosition == .rightEdge ? .trailing : .center
+        // Snapping is the right answer far more often than animating is: an
+        // arrow key repeats faster than a tween completes, so an animated strip
+        // queues a backlog of overlapping scrolls and visibly lags the
+        // selection. Animation is therefore opt-in and short — it is the strip
+        // re-parking itself, not a transition worth watching.
+        if animated && settings.animatesStripScroll {
+            withAnimation(.easeOut(duration: settings.stripScrollDuration)) {
+                proxy.scrollTo(id, anchor: anchor)
+            }
+        } else {
+            var transaction = Transaction()
+            transaction.disablesAnimations = true
+            withTransaction(transaction) {
+                proxy.scrollTo(id, anchor: anchor)
+            }
         }
     }
 
@@ -328,3 +460,128 @@ struct RectCorner: OptionSet {
     static let bottomLeft = RectCorner(rawValue: 1 << 2)
     static let bottomRight = RectCorner(rawValue: 1 << 3)
 }
+
+// MARK: - AppKit probes
+
+/// Hands the enclosing `NSScrollView` to SwiftUI.
+///
+/// SwiftUI's own coordinate spaces were not enough to answer "is this card on
+/// screen": a preference measured with `.named(...)` reports offsets in
+/// whatever space that name resolves to, and the values it produced for a
+/// scrolled strip did not track the clip view's origin. The scroll view can
+/// answer exactly and for free, because it already knows its bounds and its
+/// content view.
+struct CardSlotReporter: View {
+    let id: UUID
+    let side: CGFloat
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { publish(proxy) }
+                .onChange(of: proxy.frame(in: .named(BarView.stripSpace)).origin) { _, _ in
+                    publish(proxy)
+                }
+                // The strip's content space origin moves with the scroll
+                // offset, so the reported rectangle also has to be refreshed
+                // when the clip view scrolls; without this a card's recorded
+                // span goes stale the moment the strip moves.
+                .onReceive(NotificationCenter.default.publisher(
+                    for: NSView.boundsDidChangeNotification, object: nil)
+                    .receive(on: RunLoop.main)) { _ in
+                        publish(proxy)
+                    }
+        }
+    }
+
+    /// Records both spaces. `content` answers "which card is here" once the
+    /// click has already been converted to strip content coordinates, and
+    /// `window` answers it directly, which is what the router prefers because
+    /// it needs no conversion at all and therefore cannot drift.
+    private func publish(_ proxy: GeometryProxy) {
+        let content = proxy.frame(in: .named(BarView.stripSpace))
+        let global = proxy.frame(in: .global)
+        BarClickRouter.shared.register(id: id, contentFrame: content, globalFrame: global)
+    }
+}
+
+/// The strip's own horizontal scroller.
+///
+/// `enclosingScrollView` finds nothing because SwiftUI's `ScrollView` does not
+/// expose its `NSScrollView` to descendants, so the search walks the window
+/// instead. Taking the *first* scroll view found is wrong: the window also
+/// hosts narrow vertical scrollers elsewhere (a 140 pt one is the settings
+/// list), and any of those answers every question with nonsense. The strip is
+/// the one that is both horizontally scrollable and the widest found.
+@MainActor
+func findStripScrollView(in root: NSView) -> NSScrollView? {
+    var best: NSScrollView?
+    func visit(_ view: NSView) {
+        if let scroll = view as? NSScrollView {
+            let width = scroll.contentView.bounds.width
+            let height = scroll.contentView.bounds.height
+            if width > height, best == nil || width > best!.contentView.bounds.width {
+                best = scroll
+            }
+        }
+        for sub in view.subviews { visit(sub) }
+    }
+    visit(root)
+    return best
+}
+
+struct StripScrollViewProbe: NSViewRepresentable {
+    let onResolve: (NSScrollView?) -> Void
+
+    func makeNSView(context: Context) -> ProbeView {
+        let view = ProbeView()
+        view.onResolve = onResolve
+        return view
+    }
+
+    func updateNSView(_ nsView: ProbeView, context: Context) {
+        nsView.onResolve = onResolve
+    }
+
+    final class ProbeView: NSView {
+        var onResolve: ((NSScrollView?) -> Void)?
+
+        /// The strip's own horizontal scroller.
+        ///
+        /// `enclosingScrollView` finds nothing because SwiftUI's `ScrollView`
+        /// does not expose its `NSScrollView` to descendants, so the search
+        /// walks the window instead. Taking the *first* scroll view found is
+        /// wrong: the window also hosts narrow vertical scrollers elsewhere
+        /// (a 140 pt one is the settings list), and any of those answers every
+        /// question with nonsense. The strip is the one that is both
+        /// horizontally scrollable and wider than it is tall.
+        static func findScrollView(from view: NSView) -> NSScrollView? {
+            guard let root = view.window?.contentView else { return nil }
+            return findStripScrollView(in: root)
+        }
+        private var resolved = false
+
+        override func viewDidMoveToWindow() {
+            super.viewDidMoveToWindow()
+            guard !resolved, window != nil else { return }
+            resolved = true
+            // One turn later: at `viewDidMoveToWindow` the scroll view has been
+            // attached but has not finished laying out its clip view, so the
+            // document view still reports a zero-height frame.
+            DispatchQueue.main.async { [weak self] in
+                guard let self else { return }
+                // SwiftUI's `ScrollView` is not backed by an `NSScrollView`
+                // that a descendant can reach through `enclosingScrollView`, so
+                // the window's hierarchy is walked instead.
+                self.onResolve?(Self.findScrollView(from: self))
+            }
+        }
+    }
+}
+
+/// Reports one card's rectangle in the strip's content space.
+///
+/// `frame(in:)` is deliberately not used here. The frame this probe publishes
+/// is computed from the card's own AppKit frame converted through the document
+/// view, which is already in the space the scroll view scrolls, so no
+/// coordinate-space guessing is involved.

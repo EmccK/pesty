@@ -93,6 +93,31 @@ enum ClipPreviewProvider {
         return FileInfo(icon: icon, isMissing: false)
     }
 
+    /// A preview that can be produced without an async hop: the bitmap is
+    /// already in memory for image clips, and file thumbnails go through
+    /// QuickLook, which is the only one that has to wait.
+    ///
+    /// Card bodies ask for a preview the moment the card appears; returning
+    /// synchronously here keeps a card that scrolls back into view from
+    /// flashing empty for a frame before its cached bitmap lands.
+    static func synchronouslyLoadableImage(for item: ClipItem) -> NSImage? {
+        guard item.type == .image,
+              let url = ClipboardStore.shared.imageURL(for: item),
+              let key = imageKey(for: item),
+              let decoded = decode(url) else { return nil }
+        images.setObject(decoded, forKey: key, cost: cost(of: decoded))
+        return decoded
+    }
+
+    /// The cached `FileInfo` for a clip, if a previous appearance resolved it.
+    /// The file itself is not stat'ed: this is the cheap path, and a stale
+    /// answer is corrected by the next asynchronous `fileInfo` call.
+    static func cachedFileInfo(for item: ClipItem) -> FileInfo? {
+        guard let url = firstFileURL(for: item),
+              let icon = icons.object(forKey: url.path as NSString) else { return nil }
+        return FileInfo(icon: icon, isMissing: false)
+    }
+
     private static func imageKey(for item: ClipItem) -> NSString? {
         if item.type == .image {
             guard let path = ClipboardStore.shared.imageURL(for: item)?.path else { return nil }

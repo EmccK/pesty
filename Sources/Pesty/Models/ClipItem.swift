@@ -17,6 +17,28 @@ struct ClipItem: Identifiable, Codable, Equatable {
     var customTitle: String?
     var createdAt: Date
 
+    // MARK: - Derived, cache-only state
+    //
+    // Everything below is computed once per content change instead of on every
+    // render. The strip re-evaluates a card's body for selection, hover, and
+    // every scroll-driven size pass, and each of these used to rebuild strings
+    // (displayTitle, searchableText, metaLeft, the relative timestamp) or cache
+    // dictionaries (pinboard lookups) on every one of those passes.
+
+    // Synthesized stays in the file format (version tolerant, and the
+    // explicitly cached values must not leak into `Equatable` comparisons of
+    // the persisted content). They are rebuilt on init and on decode.
+
+    /// Lowercased haystack for the bar's search; filtering 5 000 clips used to
+    /// rebuild five joined strings per item per keystroke.
+    private(set) var searchTextLowercased: String = ""
+    /// `displayTitle` as last computed, including the localized fallbacks.
+    private(set) var cachedDisplayTitle: String = ""
+    /// The band's relative timestamp, resolved at the moment the clip was
+    /// recorded. The band shows the clip's age, so recomputing it per render
+    /// bought nothing but a `RelativeDateTimeFormatter` allocation.
+    private(set) var cachedRelativeDate: String = ""
+
     init(id: UUID = UUID(),
          type: ClipType,
          text: String? = nil,
@@ -43,9 +65,39 @@ struct ClipItem: Identifiable, Codable, Equatable {
         self.sourceAppName = sourceAppName
         self.customTitle = customTitle
         self.createdAt = createdAt
+        refreshDerivedState()
     }
 
     var charCount: Int { text?.count ?? 0 }
+
+    /// Recomputes the cache-only fields. Call after mutating anything they read.
+    ///
+    /// `createdAt` is stamped in so a promoted clip (same content, new copy
+    /// time) also refreshes its band timestamp. `nonisolated` because decoding
+    /// runs off the main actor.
+    nonisolated mutating func refreshDerivedState(now: Date = Date()) {
+        searchTextLowercased = Self.searchHaystack(for: self)
+        cachedDisplayTitle = computeDisplayTitle()
+        cachedRelativeDate = Self.relativeDate(for: createdAt, now: now)
+    }
+
+    private nonisolated static func searchHaystack(for item: ClipItem) -> String {
+        var parts: [String] = []
+        if let customTitle = item.customTitle { parts.append(customTitle) }
+        if let text = item.text { parts.append(text) }
+        if let sourceAppName = item.sourceAppName { parts.append(sourceAppName) }
+        if !item.fileURLs.isEmpty { parts.append(item.fileURLs.joined(separator: " ")) }
+        if let colorHex = item.colorHex { parts.append(colorHex) }
+        return parts.joined(separator: " ").lowercased()
+    }
+
+    /// "Just now" for the first seconds, then the system's relative wording.
+    /// Locale comes from the app's own language setting, not the process.
+    static func relativeDate(for date: Date, now: Date = Date()) -> String {
+        let secs = now.timeIntervalSince(date)
+        if secs < 8 { return L("Just now") }
+        return ClipRelativeDateFormatter.relativeString(for: date, now: now)
+    }
 
     var plainText: String? {
         switch type {
@@ -61,7 +113,9 @@ struct ClipItem: Identifiable, Codable, Equatable {
         }
     }
 
-    var displayTitle: String {
+    var displayTitle: String { cachedDisplayTitle }
+
+    private nonisolated func computeDisplayTitle() -> String {
         if let t = customTitle, !t.isEmpty { return t }
         switch type {
         case .link:
@@ -81,12 +135,8 @@ struct ClipItem: Identifiable, Codable, Equatable {
         }
     }
 
-    var searchableText: String {
-        [customTitle, text, sourceAppName, fileURLs.joined(separator: " "), colorHex]
-            .compactMap { $0 }
-            .joined(separator: " ")
-            .lowercased()
-    }
+    /// Kept for callers outside the filter; the strip reads the cached field.
+    var searchableText: String { searchTextLowercased }
 
     func sameContent(as other: ClipItem) -> Bool {
         guard type == other.type else { return false }
@@ -100,6 +150,25 @@ struct ClipItem: Identifiable, Codable, Equatable {
             return fileURLs == other.fileURLs
         default:
             return text == other.text
+        }
+    }
+}
+
+/// One formatter for every card band. `RelativeDateTimeFormatter` is not cheap
+/// to build (and is rate-limited in its relative strings), so the strip used to
+/// pay for a fresh one per visible card per render.
+enum ClipRelativeDateFormatter {
+    private static let formatter: RelativeDateTimeFormatter = {
+        let formatter = RelativeDateTimeFormatter()
+        formatter.unitsStyle = .full
+        return formatter
+    }()
+
+    static func relativeString(for date: Date, now: Date) -> String {
+        let locale = Localization.shared.locale
+        return MainActor.assumeIsolated {
+            if formatter.locale != locale { formatter.locale = locale }
+            return formatter.localizedString(for: date, relativeTo: now)
         }
     }
 }

@@ -4,11 +4,15 @@ import SwiftUI
 
 struct ClipCardView: View {
     let item: ClipItem
-    let index: Int
-    let selected: Bool
     /// Square side in points, handed down by the strip so every card grows and
     /// shrinks with the bar the same way Paste's do.
     let side: CGFloat
+
+    /// Read from the store rather than passed in by the strip: the strip's own
+    /// body then stays out of the selection path, and only the card whose flag
+    /// flipped invalidates.
+    private var selected: Bool { store.isSelected(item.id) }
+    private var index: Int { store.visibleIndex(of: item.id) }
 
     @State private var hovering = false
     @State private var preview: NSImage?
@@ -23,8 +27,17 @@ struct ClipCardView: View {
 
     /// The card's own color: the dominant color of the app the clip came from,
     /// which is what makes Paste's strip read as a row of colored cards.
-    private var bandColor: Color {
-        Color(nsColor: AppIconProvider.dominantColor(forBundleID: item.sourceBundleID))
+    ///
+    /// Resolved once per card instead of inside the body: a body evaluation
+    /// happens on hover, on selection, and on every scroll-driven size pass,
+    /// and this lookup is a cache probe whose miss rasterizes a whole icon.
+    @State private var bandColor = Color(nsColor: AppIconProvider.neutral)
+
+    /// "⌘3"-style label for the first nine visible cards, otherwise nil.
+    private var quickPasteHint: String? {
+        let position = index
+        guard position < 9 else { return nil }
+        return "\(position + 1)"
     }
 
     var body: some View {
@@ -47,27 +60,75 @@ struct ClipCardView: View {
                 .padding(-Theme.selectedCardRing)
             }
         }
-        .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
-        .scaleEffect(hovering && !selected ? 1.02 : 1.0)
+        // The drop shadow belongs to a plain opaque shape, not to the card
+        // itself. Blurring the card means an offscreen pass over its text,
+        // image, band and ring for every card on screen; a filled rounded
+        // rectangle is something Core Animation can cache. The silhouette is
+        // the same either way: the card's own rounded rect when idle, and the
+        // ring's outer rect when selected, which is exactly the card grown by
+        // the ring's width with the matching corner radius.
+        .background {
+            RoundedRectangle(
+                cornerRadius: Theme.cardCorner + (selected ? Theme.selectedCardRing : 0),
+                style: .continuous
+            )
+            .fill(Theme.cardBody)
+            .padding(selected ? -Theme.selectedCardRing : 0)
+            .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
+        }
+        // Hover used to drive `scaleEffect` on the whole card. That makes a
+        // 2 % scale a layout-affecting transform on a container whose shadow,
+        // clipped image and text all have to be re-rasterized — the single
+        // most expensive thing that happens while the pointer crosses the
+        // strip. Drawn on a fixed-size shape it stays a Core Animation-only
+        // change, and the card geometry never moves.
+        .background {
+            if hovering && !selected {
+                RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
+                    .stroke(Theme.selection.opacity(0.55), lineWidth: 1.5)
+                    .padding(-1.5)
+                    .allowsHitTesting(false)
+                    .transition(.opacity)
+            }
+        }
         .zIndex(selected ? 1 : 0)
         // Selection has to land on the click, not drift in: a 0.32 s spring
         // made the ring fade up over half a second, which reads as the bar
         // being slow to acknowledge a click.
         .animation(.easeOut(duration: 0.1), value: selected)
-        .animation(.easeOut(duration: 0.14), value: hovering)
+        .animation(.easeOut(duration: 0.12), value: hovering)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        // Double-click pastes, single click selects. The single tap has to stay a
-        // plain tap gesture behind the double-click one: selecting on the first
-        // click would let `scrollToSelected` slide the card out from under the
-        // second click, and the double-click would never complete.
-        .onTapGesture(count: 2) { AppController.shared.pasteItem(item) }
-        .onTapGesture { store.select(item.id) }
-        .highPriorityGesture(TapGesture().modifiers(.shift).onEnded { store.extendSelection(to: item.id) })
-        .highPriorityGesture(TapGesture().modifiers(.command).onEnded { store.toggleSelection(item.id) })
+        // Click selects immediately, double-click pastes.
+        //
+        // The stacked `onTapGesture` pair this replaces made a single click wait
+        // out the double-click interval before it fired: SwiftUI cannot tell a
+        // single tap from the first half of a double tap until the second click
+        // does not arrive, so selection landed ~0.25 s after the mouse came up.
+        // That delay is what reads as "the card reacts a moment later".
+        //
+        // Selecting on the first click and pasting on the second removes the
+        // wait entirely. The comment that used to justify the stacking warned
+        // that selecting early would let the strip scroll the card out from
+        // under the second click; that is no longer possible, because the strip
+        // only scrolls when the selection is off screen, and a card you just
+        // clicked is by definition on screen.
+        .simultaneousGesture(
+            TapGesture().modifiers(.shift).onEnded { store.extendSelection(to: item.id) }
+        )
+        .simultaneousGesture(
+            TapGesture().modifiers(.command).onEnded { store.toggleSelection(item.id) }
+        )
+        // Clicks are routed by `BarPanel.sendEvent` — see `BarClickRouter`. A
+        // tap gesture cannot be used for the plain click here: pairing it with
+        // `onTapGesture(count: 2)` forces every single click to wait out the
+        // system double-click interval before it is recognised, which measured
+        // as a 350 ms gap between mouse-up and the selection landing.
         .onDrag { ClipDragProvider.make(for: item) }
         .contextMenu { menu }
         .task(id: item.id) { await loadPreview() }
+        .onAppear { resolveBandColor() }
+        .onChange(of: item.sourceBundleID) { _, _ in resolveBandColor() }
     }
 
     /// The colored header band: the clip's type and when it was copied on the
@@ -81,7 +142,7 @@ struct ClipCardView: View {
                     Text(cardTypeLabel)
                         .font(.system(size: 13, weight: .bold))
                         .foregroundStyle(Theme.bandTextPrimary)
-                    Text(item.createdAt.clipRelativeLong)
+                    Text(item.cachedRelativeDate)
                         .font(.system(size: 11))
                         .foregroundStyle(Theme.bandTextSecondary)
                 }
@@ -227,18 +288,32 @@ struct ClipCardView: View {
     }
 
     private func loadPreview() async {
+        // Both lookups hand back what is already cached before they suspend,
+        // so a card that scrolls back into view comes up on the same run loop
+        // pass instead of showing an empty frame and then filling in — the
+        // flash that made the strip look like it was stuttering while it
+        // scrolled.
         preview = ClipPreviewProvider.cachedImage(for: item)
-        fileInfo = nil
+        if preview == nil, ClipPreviewProvider.showsImage(item) {
+            preview = ClipPreviewProvider.synchronouslyLoadableImage(for: item)
+        }
+        fileInfo = ClipPreviewProvider.cachedFileInfo(for: item)
         previewFailed = false
+
         if ClipPreviewProvider.showsImage(item) {
             if preview == nil {
-                preview = await ClipPreviewProvider.image(for: item, scale: NSScreen.main?.backingScaleFactor ?? 2)
+                let scale = NSScreen.main?.backingScaleFactor ?? 2
+                preview = await ClipPreviewProvider.image(for: item, scale: scale)
             }
             guard preview == nil, item.type == .file else { return }
             previewFailed = true
         }
-        guard item.type == .file else { return }
+        guard item.type == .file, fileInfo == nil else { return }
         fileInfo = await ClipPreviewProvider.fileInfo(for: item)
+    }
+
+    private func resolveBandColor() {
+        bandColor = Color(nsColor: AppIconProvider.dominantColor(forBundleID: item.sourceBundleID))
     }
 
     private func placeholder(_ symbol: String) -> some View {
@@ -257,13 +332,15 @@ struct ClipCardView: View {
                 .shadow(color: Theme.overlayTextShadow, radius: 2, y: 1)
                 .frame(maxWidth: .infinity)
             // Paste keeps cards clean, so the quick-paste hint only shows
-            // while the pointer is over the card.
-            if index < 9 {
+            // while the pointer is over the card. Its text is built once at
+            // card creation instead of on every hover and scroll pass, which
+            // is when this footer re-renders.
+            if let quickPasteHint {
                 HStack(spacing: 3) {
                     Spacer(minLength: 0)
                     Text(settings.quickPasteModifierDisplay)
                         .font(.system(size: 10, weight: .semibold))
-                    Text("\(index + 1)")
+                    Text(quickPasteHint)
                         .font(.system(size: 10, weight: .semibold))
                 }
                 .foregroundStyle(Theme.cardTextTertiary)
@@ -289,7 +366,14 @@ struct ClipCardView: View {
         return "~" + path.dropFirst(homePath.count)
     }
 
+    /// The footer line is a pure function of the clip, and the strip re-renders
+    /// a card on hover, on selection, and on every scroll pass. Resolving it
+    /// once per clip keeps `ImagePixelSize` and the URL parsing off that path.
     private var metaLeft: String {
+        ClipCardMetaCache.value(for: item) { computeMetaLeft() }
+    }
+
+    private func computeMetaLeft() -> String {
         switch item.type {
         case .text, .richText:
             return L("%ld characters", item.charCount)
@@ -474,12 +558,39 @@ private struct CheckerboardBackground: View {
     }
 }
 
+/// Footer text per clip, keyed by the clip's identity and the two things it
+/// reads from disk (image file name, file URLs). A rename or a re-copy stamps a
+/// new `createdAt`, which is folded into the token so a promoted clip does not
+/// keep the previous line.
+@MainActor
+enum ClipCardMetaCache {
+    private struct Entry {
+        let token: String
+        let text: String
+    }
+
+    @MainActor private static var storage: [UUID: Entry] = [:]
+    private static let limit = 1_024
+
+    static func value(for item: ClipItem, compute: () -> String) -> String {
+        let token = "\(item.createdAt.timeIntervalSince1970)|\(item.imageFileName ?? "")|\(item.fileURLs.joined(separator: "|"))|\(item.customTitle ?? "")|\(item.text?.count ?? -1)"
+        if let entry = storage[item.id], entry.token == token { return entry.text }
+        if storage.count >= limit { storage.removeAll(keepingCapacity: true) }
+        let text = compute()
+        storage[item.id] = Entry(token: token, text: text)
+        return text
+    }
+}
+
 /// Reads an image clip's pixel dimensions from the file's metadata instead of
 /// decoding it, and remembers them: the card footer asks on every render.
 @MainActor
 enum ImagePixelSize {
-    private static var cache: [String: CGSize?] = [:]
-    private static let cacheLimit = 512
+    /// Guarded by the lock rather than the main actor: the read runs on a
+    /// background queue, but the dictionary is still shared with the caller.
+    nonisolated(unsafe) private static var cache: [String: CGSize?] = [:]
+    nonisolated private static let cacheLimit = 512
+    nonisolated private static let lock = NSLock()
 
     static func of(_ item: ClipItem) -> CGSize? {
         guard item.imageFileName != nil,
@@ -487,16 +598,23 @@ enum ImagePixelSize {
         return of(url)
     }
 
-    static func of(_ url: URL) -> CGSize? {
+    /// Nonisolated so the header read runs off the main actor: a missing or
+    /// network-backed file used to stall the strip for a full main-thread turn
+    /// the first time a card appeared.
+    nonisolated static func of(_ url: URL) -> CGSize? {
         let name = url.path
-        if let cached = cache[name] { return cached }
-        if cache.count >= cacheLimit { cache.removeAll() }
+        lock.lock()
+        if let cached = cache[name] { lock.unlock(); return cached }
+        lock.unlock()
         let size = read(url)
+        lock.lock()
+        if cache.count >= cacheLimit { cache.removeAll(keepingCapacity: true) }
         cache.updateValue(size, forKey: name)
+        lock.unlock()
         return size
     }
 
-    private static func read(_ url: URL) -> CGSize? {
+    nonisolated private static func read(_ url: URL) -> CGSize? {
         guard let source = CGImageSourceCreateWithURL(url as CFURL, nil),
               let properties = CGImageSourceCopyPropertiesAtIndex(source, 0, nil) as? [CFString: Any],
               let width = properties[kCGImagePropertyPixelWidth] as? Int,

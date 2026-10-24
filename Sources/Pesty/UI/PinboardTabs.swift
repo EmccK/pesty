@@ -50,12 +50,26 @@ struct PinboardTabs: View {
         .frame(maxWidth: pillRowWidth)
     }
 
+    /// Publishes the pill row's measured width.
+    ///
+    /// A plain `onChange` wrote the new width on every measurement pass, and
+    /// because the value drives `.frame(maxWidth:)` on the row itself, a
+    /// sub-pixel difference produced a new layout, which produced another
+    /// measurement — the classic two-way resize loop that shows up as the top
+    /// bar settling in visible steps. Only whole points are published, and only
+    /// when they actually differ.
     private var rowWidthReader: some View {
         GeometryReader { proxy in
             Color.clear
-                .onAppear { pillRowWidth = proxy.size.width }
-                .onChange(of: proxy.size.width) { _, width in pillRowWidth = width }
+                .onAppear { publishRowWidth(proxy.size.width) }
+                .onChange(of: proxy.size.width) { _, width in publishRowWidth(width) }
         }
+    }
+
+    private func publishRowWidth(_ width: CGFloat) {
+        let rounded = width.rounded()
+        guard rounded > 0, abs(rounded - (pillRowWidth ?? 0)) > 0.5 else { return }
+        pillRowWidth = rounded
     }
 
     private func pill(title: String, dot: Color?, icon: String? = nil,

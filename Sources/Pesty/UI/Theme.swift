@@ -152,20 +152,43 @@ extension Date {
         case ..<86_400:   return "\(Int(secs / 3600))h"
         case ..<604_800:  return "\(Int(secs / 86_400))d"
         default:
-            let f = DateFormatter()
-            f.locale = Localization.shared.locale
-            f.dateFormat = DateFormatter.dateFormat(
-                fromTemplate: "MMMd", options: 0, locale: f.locale) ?? "MMM d"
-            return f.string(from: self)
+            return ClipDateFormatters.shortDayString(for: self)
         }
     }
 
+    /// Shares one formatter with `ClipItem`: a card band asks for this on every
+    /// render pass, and building a `RelativeDateTimeFormatter` each time shows
+    /// up as a stutter the moment the strip starts scrolling.
     var clipRelativeLong: String {
         let secs = -timeIntervalSinceNow
         if secs < 8 { return L("Just now") }
-        let f = RelativeDateTimeFormatter()
-        f.locale = Localization.shared.locale
-        f.unitsStyle = .full
-        return f.localizedString(for: self, relativeTo: Date())
+        return ClipRelativeDateFormatter.relativeString(for: self, now: Date())
+    }
+}
+
+/// Formatters the strip reaches for on every render. Both are expensive to
+/// build and cheap to reuse, so they are created once per locale and then only
+/// read.
+enum ClipDateFormatters {
+    private final class Box: @unchecked Sendable {
+        var formatter: DateFormatter?
+        var locale: Locale?
+    }
+    private static let box = Box()
+    private static let lock = NSLock()
+
+    static func shortDayString(for date: Date) -> String {
+        let locale = Localization.shared.locale
+        lock.lock()
+        defer { lock.unlock() }
+        if box.formatter == nil || box.locale != locale {
+            let formatter = DateFormatter()
+            formatter.locale = locale
+            formatter.dateFormat = DateFormatter.dateFormat(
+                fromTemplate: "MMMd", options: 0, locale: locale) ?? "MMM d"
+            box.formatter = formatter
+            box.locale = locale
+        }
+        return box.formatter!.string(from: date)
     }
 }

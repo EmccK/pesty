@@ -1,6 +1,7 @@
 import AppKit
 import Carbon.HIToolbox
 import Observation
+import SwiftUI
 
 enum ShortcutModifier: CaseIterable, Identifiable {
     case command
@@ -138,9 +139,19 @@ enum HistoryRetentionPreset: Int, CaseIterable, Identifiable {
     }
 }
 
+/// Where the strip puts the clip the user is on.
+///
+/// The two anchor modes answer "where does the selection sit"; `scrollPolicy`
+/// below answers the separate question of whether reaching a clip should move
+/// the strip at all. Clicking a card near the edge and having the whole row
+/// slide under the pointer is the behaviour `.center` produces by default.
 enum SelectedClipPosition: Int, CaseIterable, Identifiable {
     case center
     case rightEdge
+    /// Never move the strip for a selection that is already on screen. The
+    /// strip scrolls only when the clip is genuinely out of view, which keeps
+    /// the row still under the pointer while the user is clicking through it.
+    case keepVisible
 
     var id: Int { rawValue }
 
@@ -148,14 +159,25 @@ enum SelectedClipPosition: Int, CaseIterable, Identifiable {
         switch self {
         case .center: L("Center")
         case .rightEdge: L("Right edge")
+        case .keepVisible: L("Don't scroll")
         }
     }
 
     var detail: String {
         switch self {
-        case .center: L("Keep the selected clip centered with surrounding context visible.")
-        case .rightEdge: L("Place the selected clip at the far right, like Paste.")
+        case .center:
+            L("Keep the selected clip centered with surrounding context visible.")
+        case .rightEdge:
+            L("Place the selected clip at the far right, like Paste.")
+        case .keepVisible:
+            L("Leave the strip where it is while you click. It only scrolls when a clip is out of view.")
         }
+    }
+
+    /// Whether reaching this clip should move the strip even when the clip is
+    /// already fully on screen.
+    var centersOnEverySelection: Bool {
+        self != .keepVisible
     }
 }
 
@@ -191,6 +213,8 @@ final class Settings {
         static let iCloudSync = "iCloudSync"
         static let cloudKitSync = "cloudKitSync"
         static let selectedClipPosition = "selectedClipPosition"
+        static let animatesStripScroll = "animatesStripScroll"
+        static let stripScrollDuration = "stripScrollDuration"
         static let appLanguage = "appLanguage"
     }
 
@@ -332,6 +356,25 @@ final class Settings {
         didSet { guard isLoaded else { return }; d.set(selectedClipPosition.rawValue, forKey: Keys.selectedClipPosition) }
     }
 
+    /// Whether a jump to a distant clip is animated. Arrowing between
+    /// neighbours always snaps regardless: a 0.2 s tween per step cannot finish
+    /// before the next key repeat, and the queue that builds up is what makes
+    /// keyboard navigation feel like it is dragging.
+    var animatesStripScroll: Bool {
+        didSet { guard isLoaded else { return }; d.set(animatesStripScroll, forKey: Keys.animatesStripScroll) }
+    }
+
+    /// How long the animated jump takes. Short on purpose: this is the strip
+    /// re-parking itself, not a transition the user asked to watch.
+    var stripScrollDuration: Double {
+        didSet {
+            guard isLoaded else { return }
+            let clamped = min(0.6, max(0.05, stripScrollDuration))
+            if clamped != stripScrollDuration { stripScrollDuration = clamped; return }
+            d.set(clamped, forKey: Keys.stripScrollDuration)
+        }
+    }
+
     /// The interface language. Written straight through to `Localization`, which
     /// swaps the active table and notifies AppKit surfaces to rebuild.
     var appLanguage: AppLanguage {
@@ -368,7 +411,9 @@ final class Settings {
             Keys.onboarded: false,
             Keys.iCloudSync: false,
             Keys.cloudKitSync: true,
-            Keys.selectedClipPosition: SelectedClipPosition.center.rawValue,
+            Keys.selectedClipPosition: SelectedClipPosition.keepVisible.rawValue,
+            Keys.animatesStripScroll: true,
+            Keys.stripScrollDuration: 0.16,
             Keys.appLanguage: AppLanguage.system.rawValue
         ])
         historyLimit = d.integer(forKey: Keys.historyLimit)
@@ -397,7 +442,9 @@ final class Settings {
         onboarded = d.bool(forKey: Keys.onboarded)
         iCloudSync = d.bool(forKey: Keys.iCloudSync)
         cloudKitSync = d.bool(forKey: Keys.cloudKitSync)
-        selectedClipPosition = SelectedClipPosition(rawValue: d.integer(forKey: Keys.selectedClipPosition)) ?? .center
+        selectedClipPosition = SelectedClipPosition(rawValue: d.integer(forKey: Keys.selectedClipPosition)) ?? .keepVisible
+        animatesStripScroll = d.object(forKey: Keys.animatesStripScroll) as? Bool ?? true
+        stripScrollDuration = d.object(forKey: Keys.stripScrollDuration) as? Double ?? 0.16
         appLanguage = AppLanguage.persisted
         isLoaded = true
         if normalizedBarHeight != storedBarHeight {
