@@ -92,6 +92,10 @@ final class BarWindowController: NSWindowController, NSWindowDelegate {
             panel.contentView = glass
             panel.hasShadow = false
         } else {
+            // The HUD material is always dark, so pin the appearance dark:
+            // the adaptive Theme tokens would otherwise resolve to their light
+            // variants in light system mode and vanish against the HUD.
+            panel.appearance = NSAppearance(named: .darkAqua)
             panel.contentView = content
         }
         super.init(window: panel)

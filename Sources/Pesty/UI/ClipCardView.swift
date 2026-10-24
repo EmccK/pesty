@@ -6,6 +6,9 @@ struct ClipCardView: View {
     let item: ClipItem
     let index: Int
     let selected: Bool
+    /// Square side in points, handed down by the strip so every card grows and
+    /// shrinks with the bar the same way Paste's do.
+    let side: CGFloat
 
     @State private var hovering = false
     @State private var preview: NSImage?
@@ -13,16 +16,28 @@ struct ClipCardView: View {
     @State private var fileInfo: ClipPreviewProvider.FileInfo?
     private var store: ClipboardStore { ClipboardStore.shared }
     private var settings: Settings { Settings.shared }
-    private var headerColor: Color { SourceColor.color(for: item.sourceBundleID) }
+
+    private var bandHeight: CGFloat {
+        max(Theme.bandMinHeight, side * Theme.bandHeightRatio)
+    }
+
+    /// The card's own color: the dominant color of the app the clip came from,
+    /// which is what makes Paste's strip read as a row of colored cards.
+    private var bandColor: Color {
+        Color(nsColor: AppIconProvider.dominantColor(forBundleID: item.sourceBundleID))
+    }
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            body_
+            band
+            contentArea
         }
-        .frame(width: Theme.cardWidth)
+        .frame(width: side, height: side)
+        .background(Theme.cardBody)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
         .background {
+            // Paste's selection is a capsule behind the card, not a halo: the
+            // card sits inside 4 pt of accent color.
             if selected {
                 RoundedRectangle(
                     cornerRadius: Theme.cardCorner + Theme.selectedCardRing,
@@ -32,13 +47,8 @@ struct ClipCardView: View {
                 .padding(-Theme.selectedCardRing)
             }
         }
-        .overlay(
-            RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous)
-                .strokeBorder(selected ? Theme.selection : Theme.cardBorder,
-                              lineWidth: selected ? 1.5 : 1)
-        )
         .shadow(color: .black.opacity(0.18), radius: 5, y: 2)
-        .scaleEffect(hovering && !selected ? 1.015 : 1.0)
+        .scaleEffect(hovering && !selected ? 1.02 : 1.0)
         .zIndex(selected ? 1 : 0)
         .animation(.spring(response: 0.32, dampingFraction: 0.72), value: selected)
         .animation(.easeOut(duration: 0.14), value: hovering)
@@ -53,26 +63,39 @@ struct ClipCardView: View {
         .task(id: item.id) { await loadPreview() }
     }
 
-    private var header: some View {
-        ZStack {
-            headerColor
+    /// The colored header band: the clip's type and when it was copied on the
+    /// left, the source app's own icon filling the band's right end and clipped
+    /// by the card's corner, exactly as Paste draws it.
+    private var band: some View {
+        ZStack(alignment: .topLeading) {
+            bandColor
             HStack(alignment: .top, spacing: 8) {
-                VStack(alignment: .leading, spacing: 2) {
+                VStack(alignment: .leading, spacing: 1) {
                     Text(cardTypeLabel)
-                        .font(.system(size: 15, weight: .bold))
-                        .foregroundStyle(Theme.headerText)
+                        .font(.system(size: 13, weight: .bold))
+                        .foregroundStyle(Theme.bandTextPrimary)
                     Text(item.createdAt.clipRelativeLong)
-                        .font(.system(size: 12))
-                        .foregroundStyle(Theme.headerSubText)
+                        .font(.system(size: 11))
+                        .foregroundStyle(Theme.bandTextSecondary)
                 }
                 .lineLimit(1)
                 Spacer(minLength: 4)
-                appIconTile
             }
-            .padding(.horizontal, 13)
-            .padding(.vertical, 7)
+            .padding(.leading, Theme.cardOverlayInset)
+            // The icon owns the band's right end, so the labels stop short of it.
+            .padding(.trailing, bandHeight + 6)
+            .padding(.top, 9)
+
+            HStack(spacing: 0) {
+                Spacer(minLength: 0)
+                Image(nsImage: AppIconProvider.icon(forBundleID: item.sourceBundleID))
+                    .resizable()
+                    .interpolation(.high)
+                    .frame(width: bandHeight, height: bandHeight)
+            }
         }
-        .frame(height: Theme.headerHeight)
+        .frame(height: bandHeight)
+        .clipped()
     }
 
     private var cardTypeLabel: String {
@@ -82,34 +105,19 @@ struct ClipCardView: View {
         return item.type.label
     }
 
-    private var appIconTile: some View {
-        RoundedRectangle(cornerRadius: 15, style: .continuous)
-            .fill(Color.white.opacity(0.14))
-            .overlay(
-                RoundedRectangle(cornerRadius: 15, style: .continuous)
-                    .strokeBorder(Color.white.opacity(0.14))
-            )
-            .frame(width: 56, height: 56)
-            .overlay(
-                Image(nsImage: AppIconProvider.icon(forBundleID: item.sourceBundleID))
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: 48, height: 48)
-            )
-    }
-
-    private var body_: some View {
-        VStack(alignment: .leading, spacing: 0) {
+    /// Everything below the band: the preview fills it, and the metadata line
+    /// sits centered along the card's bottom edge.
+    private var contentArea: some View {
+        ZStack(alignment: .bottom) {
             content
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-                .padding(.horizontal, showsImage ? 0 : 13)
-                .padding(.top, showsImage ? 0 : 11)
             footer
-                .padding(.horizontal, 13)
+                .padding(.horizontal, Theme.cardOverlayInset)
                 .padding(.bottom, 10)
+                .allowsHitTesting(false)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .background(Theme.cardBody)
+        .clipped()
     }
 
     /// Image clips, and file clips pointing at an image, which is how a copied
@@ -125,12 +133,11 @@ struct ClipCardView: View {
             imageCanvas
         case .color:
             ZStack {
-                RoundedRectangle(cornerRadius: 8).fill(Color(hex: item.colorHex ?? "#000") ?? .black)
+                Rectangle().fill(Color(hex: item.colorHex ?? "#000") ?? .black)
                 Text(item.colorHex ?? "")
-                    .font(.system(size: 13, weight: .bold, design: .monospaced))
+                    .font(.system(size: 15, weight: .bold, design: .monospaced))
                     .foregroundStyle(.white).shadow(radius: 1)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
         case .file:
             if showsImage {
                 imageCanvas
@@ -141,21 +148,33 @@ struct ClipCardView: View {
             VStack(spacing: 10) {
                 Spacer(minLength: 0)
                 Image(systemName: "safari").font(.system(size: 34, weight: .light))
-                    .foregroundStyle(Theme.cardTextTertiary)
+                    .foregroundStyle(Theme.cardTextSecondary)
+                Text(item.displayTitle)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(Theme.cardTextPrimary)
+                    .lineLimit(2)
+                    .multilineTextAlignment(.center)
+                    .padding(.horizontal, 6)
                 Spacer(minLength: 0)
             }
             .frame(maxWidth: .infinity)
         default:
+            // The floating header reserves the top of the card, the metadata
+            // the bottom; the text lives between them.
             Text(item.text ?? "")
                 .font(.system(size: 12.5))
-                .foregroundStyle(Theme.cardTextPrimary.opacity(0.9))
+                .foregroundStyle(Theme.cardTextPrimary)
                 .lineLimit(10)
                 .multilineTextAlignment(.leading)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+                .padding(.horizontal, 13)
+                .padding(.top, Theme.cardContentTopInset)
+                .padding(.bottom, Theme.cardContentBottomInset)
         }
     }
 
     /// Over a checkerboard, so a transparent cut-out is distinguishable from
-    /// an image on white.
+    /// an image on the card surface.
     private var imageCanvas: some View {
         ZStack {
             CheckerboardBackground()
@@ -173,6 +192,7 @@ struct ClipCardView: View {
     @ViewBuilder
     private var fileContent: some View {
         VStack(spacing: 9) {
+            Spacer(minLength: 0)
             if let icon = fileInfo?.icon ?? ClipPreviewProvider.cachedIcon(for: item) {
                 Image(nsImage: icon)
                     .resizable()
@@ -181,7 +201,7 @@ struct ClipCardView: View {
                     .opacity(fileInfo?.isMissing == true ? 0.5 : 1)
             } else {
                 Image(systemName: "doc.fill").font(.system(size: 32))
-                    .foregroundStyle(headerColor)
+                    .foregroundStyle(Theme.cardTextTertiary)
             }
             Text(item.displayTitle).font(.system(size: 12))
                 .foregroundStyle(Theme.cardTextSecondary).lineLimit(2)
@@ -191,8 +211,12 @@ struct ClipCardView: View {
                     .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(Theme.cardTextTertiary)
             }
+            Spacer(minLength: 0)
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .padding(.horizontal, 13)
+        .padding(.top, Theme.cardContentTopInset)
+        .padding(.bottom, Theme.cardContentBottomInset)
     }
 
     private func loadPreview() async {
@@ -217,34 +241,28 @@ struct ClipCardView: View {
     }
 
     private var footer: some View {
-        VStack(alignment: .leading, spacing: 3) {
-            if item.type == .link {
-                Text(item.displayTitle)
-                    .font(.system(size: 12, weight: .semibold))
-                    .foregroundStyle(Theme.cardTextPrimary).lineLimit(1)
-            }
-            HStack(alignment: .bottom, spacing: 6) {
-                // A path is worth reading in full, so it wraps rather than
-                // collapsing to an ellipsis; everything else stays one line.
-                Text(metaLeft)
-                    .font(.system(size: 11))
-                    .foregroundStyle(Theme.cardTextSecondary)
-                    .lineLimit(item.type == .file ? 3 : 1)
-                    .multilineTextAlignment(.leading)
-                    .fixedSize(horizontal: false, vertical: true)
-                Spacer(minLength: 4)
-                if index < 9 {
-                    HStack(spacing: 3) {
-                        Text(settings.quickPasteModifierDisplay)
-                            .font(.system(size: 11, weight: .semibold))
-                        Text("\(index + 1)")
-                            .font(.system(size: 11, weight: .semibold))
-                    }
-                    .foregroundStyle(Theme.cardTextTertiary)
+        ZStack {
+            Text(metaLeft)
+                .font(.system(size: 11))
+                .foregroundStyle(Theme.cardTextSecondary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .shadow(color: Theme.overlayTextShadow, radius: 2, y: 1)
+                .frame(maxWidth: .infinity)
+            // Paste keeps cards clean, so the quick-paste hint only shows
+            // while the pointer is over the card.
+            if index < 9 {
+                HStack(spacing: 3) {
+                    Spacer(minLength: 0)
+                    Text(settings.quickPasteModifierDisplay)
+                        .font(.system(size: 10, weight: .semibold))
+                    Text("\(index + 1)")
+                        .font(.system(size: 10, weight: .semibold))
                 }
+                .foregroundStyle(Theme.cardTextTertiary)
+                .opacity(hovering ? 1 : 0)
             }
         }
-        .padding(.top, 8)
     }
 
     private var isSingleImageFile: Bool {
@@ -423,15 +441,16 @@ struct ClipCardView: View {
     }
 }
 
-/// The standard transparency checkerboard drawn behind image clips. A Canvas
-/// rather than a tiled image: the pattern is a handful of rects, and this keeps
-/// it resolution independent without shipping an asset.
+/// The standard transparency checkerboard drawn behind image clips, in the
+/// palette of the current appearance. A Canvas rather than a tiled image: the
+/// pattern is a handful of rects, and this keeps it resolution independent
+/// without shipping an asset.
 private struct CheckerboardBackground: View {
     var square: CGFloat = 8
 
     var body: some View {
         Canvas { context, size in
-            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(.white))
+            context.fill(Path(CGRect(origin: .zero, size: size)), with: .color(Theme.checkerBase))
             let columns = Int(ceil(size.width / square))
             let rows = Int(ceil(size.height / square))
             for row in 0..<max(rows, 0) {
@@ -440,7 +459,7 @@ private struct CheckerboardBackground: View {
                                       y: CGFloat(row) * square,
                                       width: square,
                                       height: square)
-                    context.fill(Path(rect), with: .color(Color(white: 0.87)))
+                    context.fill(Path(rect), with: .color(Theme.checkerAlt))
                 }
             }
         }

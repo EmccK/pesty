@@ -6,7 +6,7 @@ struct PinboardTabs: View {
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
             HStack(spacing: 8) {
-                pill(title: L("Clipboard"),
+                pill(title: L("Clipboard History"),
                      dot: nil,
                      icon: "clock",
                      selected: store.source == .history) {

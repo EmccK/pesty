@@ -27,15 +27,16 @@ struct BarView: View {
             }
         }
         .overlay(alignment: .top) {
-            if settings.showBarResizeHandle {
-                BarResizeHandle(
-                    accessibilityValue: CGFloat(settings.barHeight),
-                    onBegin: AppController.shared.beginBarResize,
-                    onChange: AppController.shared.updateBarResize,
-                    onEnd: AppController.shared.endBarResize,
-                    onCancel: AppController.shared.cancelBarResize,
-                    onAccessibilityAdjustment: AppController.shared.adjustBarHeight)
-            }
+            // Paste has no grabber: its whole top edge drags. The edge is
+            // always live, and Settings only decides whether the pill shows.
+            BarResizeHandle(
+                accessibilityValue: CGFloat(settings.barHeight),
+                showsGrip: settings.showBarResizeHandle,
+                onBegin: AppController.shared.beginBarResize,
+                onChange: AppController.shared.updateBarResize,
+                onEnd: AppController.shared.endBarResize,
+                onCancel: AppController.shared.cancelBarResize,
+                onAccessibilityAdjustment: AppController.shared.adjustBarHeight)
         }
         .clipShape(RoundedCorners(radius: Theme.cornerRadius, corners: [.topLeft, .topRight]))
         .ignoresSafeArea()
@@ -44,7 +45,9 @@ struct BarView: View {
     @ViewBuilder
     private var panelBackground: some View {
         if #available(macOS 26.0, *) {
-            Color.clear
+            // The glass panel provides the blur; the wash pins its value so a
+            // dark bar does not collapse into the desktop behind it.
+            Theme.panelWash
         } else {
             VisualEffectView(material: .hudWindow)
             Theme.panelTint
@@ -74,7 +77,7 @@ struct BarView: View {
             moreMenu
         }
         .padding(.horizontal, 18)
-        .frame(height: 56)
+        .frame(height: Theme.topBarHeight)
     }
 
     private var syncButton: some View {
@@ -201,44 +204,68 @@ struct BarView: View {
     /// leading edge instead would scroll the horizontal inset out of view.
     private static let stripStartID = "stripStart"
 
+    /// On macOS 26 the glass panel extends below the visible bar so its rounded
+    /// bottom corners have material to draw; that strip of extra height must not
+    /// count as card room, or every card comes out one corner radius too tall.
+    private static var panelBottomExtension: CGFloat {
+        if #available(macOS 26.0, *) { return Theme.cornerRadius }
+        return 0
+    }
+
     private var strip: some View {
-        ScrollViewReader { proxy in
-            ScrollView(.horizontal, showsIndicators: false) {
-                LazyHStack(spacing: Theme.cardSpacing) {
-                    ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
-                        ClipCardView(item: item,
-                                     index: index,
-                                     selected: store.isSelected(item.id))
-                            .id(item.id)
-                            .transition(.asymmetric(
-                                insertion: .scale(scale: 0.92).combined(with: .opacity),
-                                removal: .opacity))
+        GeometryReader { geometry in
+            let side = Self.cardSide(forStripHeight: geometry.size.height,
+                                     bottomExtension: Self.panelBottomExtension)
+            ScrollViewReader { proxy in
+                ScrollView(.horizontal, showsIndicators: false) {
+                    LazyHStack(spacing: Theme.cardSpacing) {
+                        ForEach(Array(store.visibleItems.enumerated()), id: \.element.id) { index, item in
+                            ClipCardView(item: item,
+                                         index: index,
+                                         selected: store.isSelected(item.id),
+                                         side: side)
+                                .id(item.id)
+                                .transition(.asymmetric(
+                                    insertion: .scale(scale: 0.92).combined(with: .opacity),
+                                    removal: .opacity))
+                        }
+                    }
+                    .padding(.horizontal, Theme.cardStripHorizontalPadding)
+                    .padding(.top, Theme.stripTopPadding)
+                    .padding(.bottom, Theme.stripBottomPadding)
+                    // Paste hangs its cards from the top bar; without this the
+                    // scroll view centers a shorter-than-viewport strip.
+                    .frame(maxHeight: .infinity, alignment: .top)
+                    .animation(.spring(response: 0.34, dampingFraction: 0.8), value: store.visibleItems.count)
+                    .id(Self.stripStartID)
+                }
+                .onChange(of: store.barPresentationToken) { _, _ in
+                    var transaction = Transaction()
+                    transaction.disablesAnimations = true
+                    withTransaction(transaction) {
+                        proxy.scrollTo(Self.stripStartID, anchor: .leading)
                     }
                 }
-                .padding(.horizontal, Theme.cardStripHorizontalPadding)
-                .padding(.top, 16)
-                .padding(.bottom, 26)
-                .animation(.spring(response: 0.34, dampingFraction: 0.8), value: store.visibleItems.count)
-                .id(Self.stripStartID)
-            }
-            .onChange(of: store.barPresentationToken) { _, _ in
-                var transaction = Transaction()
-                transaction.disablesAnimations = true
-                withTransaction(transaction) {
-                    proxy.scrollTo(Self.stripStartID, anchor: .leading)
+                .onChange(of: store.selectedID) { _, id in
+                    guard let id else { return }
+                    scrollToSelected(id, proxy: proxy)
                 }
+                .onChange(of: settings.selectedClipPosition) { _, _ in
+                    guard let id = store.selectedID else { return }
+                    scrollToSelected(id, proxy: proxy)
+                }
+                .overlay { if store.visibleItems.isEmpty { emptyState } }
             }
-            .onChange(of: store.selectedID) { _, id in
-                guard let id else { return }
-                scrollToSelected(id, proxy: proxy)
-            }
-            .onChange(of: settings.selectedClipPosition) { _, _ in
-                guard let id = store.selectedID else { return }
-                scrollToSelected(id, proxy: proxy)
-            }
-            .overlay { if store.visibleItems.isEmpty { emptyState } }
         }
         .frame(maxHeight: .infinity)
+    }
+
+    /// Paste's cards are square and sized from the room the strip has: the bar
+    /// can be dragged taller and the cards grow with it.
+    static func cardSide(forStripHeight height: CGFloat, bottomExtension: CGFloat = 0) -> CGFloat {
+        let available = height - bottomExtension - Theme.stripTopPadding - Theme.stripBottomPadding
+        guard available.isFinite, available > 0 else { return Theme.cardMinSide }
+        return min(Theme.cardMaxSide, max(Theme.cardMinSide, available))
     }
 
     /// The anchor preference decides whether the strip parks the selected

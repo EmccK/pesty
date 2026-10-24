@@ -3,7 +3,10 @@ import CoreGraphics
 /// Pure sizing rules shared by the Paste Bar's persisted preference and its
 /// live-resize interaction.
 enum BarResizeGeometry {
-    static let defaultHeight = 430.0
+    /// Paste's own bar measures 337 pt tall, which leaves its square cards at
+    /// 252 pt. Pesty spends a little more height on the top bar, so the default
+    /// is raised to land the cards on the same 252 pt square.
+    static let defaultHeight = 349.0
     static let minimumHeight = 300.0
     static let maximumHeight = 720.0
 

@@ -6,15 +6,24 @@ import SwiftUI
 /// the handle while it temporarily owns first-responder status.
 protocol BarResizeHandleResponder: AnyObject {}
 
-/// A compact drag target for resizing the Paste Bar vertically.
+/// A drag target along the Paste Bar's top edge for resizing it vertically.
 ///
 /// Drag callbacks use AppKit's global screen coordinate space so the owner can
 /// keep its resize geometry independent of the handle's position in SwiftUI.
+///
+/// Paste has no visible grabber: its whole top edge is draggable, and the
+/// pointer turns into a resize cursor over it. `showsGrip` keeps that behaviour
+/// while still letting the old visible pill be turned on in Settings.
 @MainActor
 struct BarResizeHandle: View {
     private static let size = NSSize(width: 42, height: 14)
 
+    /// The invisible edge is thinner than the visible grip so it cannot steal
+    /// clicks from the top bar's controls.
+    private static let edgeHeight: CGFloat = 10
+
     private let accessibilityValue: CGFloat?
+    private let showsGrip: Bool
     private let onBegin: (NSPoint) -> Void
     private let onChange: (NSPoint) -> Void
     private let onEnd: (NSPoint) -> Void
@@ -23,6 +32,7 @@ struct BarResizeHandle: View {
 
     init(
         accessibilityValue: CGFloat? = nil,
+        showsGrip: Bool = true,
         onBegin: @escaping (NSPoint) -> Void,
         onChange: @escaping (NSPoint) -> Void,
         onEnd: @escaping (NSPoint) -> Void,
@@ -30,6 +40,7 @@ struct BarResizeHandle: View {
         onAccessibilityAdjustment: @escaping (CGFloat) -> Void
     ) {
         self.accessibilityValue = accessibilityValue
+        self.showsGrip = showsGrip
         self.onBegin = onBegin
         self.onChange = onChange
         self.onEnd = onEnd
@@ -40,28 +51,34 @@ struct BarResizeHandle: View {
     var body: some View {
         BarResizeHandleRepresentable(
             accessibilityValue: accessibilityValue,
+            showsGrip: showsGrip,
             callbacks: .init(
                 onBegin: onBegin,
                 onChange: onChange,
                 onEnd: onEnd,
                 onCancel: onCancel,
                 onAccessibilityAdjustment: onAccessibilityAdjustment))
-        .frame(width: Self.size.width, height: Self.size.height)
+        .frame(maxWidth: .infinity)
+        .frame(height: showsGrip ? Self.size.height : Self.edgeHeight)
     }
 }
 
 @MainActor
 private struct BarResizeHandleRepresentable: NSViewRepresentable {
     let accessibilityValue: CGFloat?
+    let showsGrip: Bool
     let callbacks: BarResizeHandleView.Callbacks
 
     func makeNSView(context: Context) -> BarResizeHandleView {
-        BarResizeHandleView(callbacks: callbacks, accessibilityValue: accessibilityValue)
+        BarResizeHandleView(callbacks: callbacks,
+                            accessibilityValue: accessibilityValue,
+                            showsGrip: showsGrip)
     }
 
     func updateNSView(_ nsView: BarResizeHandleView, context: Context) {
         nsView.callbacks = callbacks
         nsView.accessibilityHeight = accessibilityValue
+        nsView.showsGrip = showsGrip
     }
 }
 
@@ -81,17 +98,21 @@ private final class BarResizeHandleView: NSView, BarResizeHandleResponder {
     var accessibilityHeight: CGFloat? {
         didSet { updateAccessibilityValue() }
     }
+    var showsGrip = true {
+        didSet { needsDisplay = true }
+    }
 
     private var isTrackingDrag = false
     private var ownsResizeCursor = false
     private weak var previousFirstResponder: NSResponder?
 
     override var acceptsFirstResponder: Bool { true }
-    override var intrinsicContentSize: NSSize { NSSize(width: 42, height: 14) }
+    override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 14) }
 
-    init(callbacks: Callbacks, accessibilityValue: CGFloat?) {
+    init(callbacks: Callbacks, accessibilityValue: CGFloat?, showsGrip: Bool = true) {
         self.callbacks = callbacks
-        accessibilityHeight = accessibilityValue
+        self.accessibilityHeight = accessibilityValue
+        self.showsGrip = showsGrip
         super.init(frame: NSRect(x: 0, y: 0, width: 42, height: 14))
 
         setAccessibilityElement(true)
@@ -117,6 +138,7 @@ private final class BarResizeHandleView: NSView, BarResizeHandleResponder {
 
     override func draw(_ dirtyRect: NSRect) {
         super.draw(dirtyRect)
+        guard showsGrip else { return }
         let line = NSRect(x: bounds.midX - 21, y: bounds.midY - 2, width: 42, height: 4)
         NSColor.secondaryLabelColor.withAlphaComponent(0.55).setFill()
         NSBezierPath(roundedRect: line, xRadius: 2, yRadius: 2).fill()

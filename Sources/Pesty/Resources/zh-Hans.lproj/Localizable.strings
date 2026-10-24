@@ -105,7 +105,7 @@
 "Just now" = "刚刚";
 
 /* ===== 固定板标签 ===== */
-"Clipboard" = "剪贴板";
+"Clipboard History" = "剪贴板历史";
 "Double-click or right-click to rename" = "双击或右键可重命名";
 "Delete Pinboard" = "删除固定板";
 "New Pinboard" = "新建固定板";
@@ -163,11 +163,6 @@
 "Bar height" = "栏高度";
 "Show resize handle on the Paste Bar" = "在粘贴栏上显示大小调整手柄";
 "Select a clip to copy it, then press ⌘V to paste it into your app." = "选择一个剪贴即可拷贝，然后按 ⌘V 粘贴到你的应用中。";
-"Clip Colors" = "剪贴配色";
-"Color theme" = "配色主题";
-"Base color" = "基础颜色";
-"Ten stable shades of the selected base color" = "所选基础颜色的十种固定色调";
-"Each source app keeps one of ten deterministic shades, so its cards stay recognizable without drifting too far from your chosen color." = "每个来源应用固定占用十种色调之一，因此它的卡片始终可辨认，又不会偏离你选的颜色太多。";
 "Clip Navigation" = "剪贴浏览";
 "Selected clip position" = "选中剪贴的位置";
 "Sync" = "同步";
@@ -225,12 +220,6 @@
 "3m" = "3月";
 "6m" = "6月";
 "1y" = "1年";
-"Default" = "默认";
-"Vibrant" = "鲜艳";
-"Accent shades" = "强调色调";
-"Match each clip to its source app's familiar card color." = "让每个剪贴沿用其来源应用熟悉的卡片颜色。";
-"Use a stronger, higher-contrast version of each source app color." = "使用每个来源应用颜色的更强、对比度更高的版本。";
-"Give each source app a stable lighter or darker shade of one color." = "让每个来源应用固定使用同一颜色的较浅或较深色调。";
 "Center" = "居中";
 "Right edge" = "右边缘";
 "Keep the selected clip centered with surrounding context visible." = "让选中的剪贴居中，并保留两侧的上下文。";

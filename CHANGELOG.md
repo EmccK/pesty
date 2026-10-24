@@ -21,6 +21,20 @@ All notable changes to Pesty are documented here. The format is based on
   the rest of the UI.
 
 ### Changed
+- The strip now follows Paste's banded card design: each card is a square whose
+  top carries a solid band colored from the source app icon's dominant color,
+  with the card type and age on the left and the app icon filling the band's
+  right end, the content below, and a single centered metadata line along the
+  bottom. Cards measure 251 pt square with 24 pt gaps at the default bar height,
+  14 pt corners, and a 4 pt selection ring in the system accent blue.
+- The bar resizes the way Paste's does: its whole top edge is draggable (the
+  pointer becomes a resize cursor, Escape cancels mid-drag), and the card size
+  follows the bar height between 150 and 320 pt. The Settings toggle now only
+  controls whether the visible grip pill is drawn.
+- Cards are no longer tinted per source app, so the "Clip Colors" section is
+  gone from Settings along with the per-app color assignment it drove. Clips
+  read the same regardless of where they came from, which is what makes the
+  title, date, and icon legible over every card.
 - The iCloud sync status is now derived from a state enum instead of a stored
   string, so it re-renders in the current language rather than freezing at
   whatever language was active when the state last changed.
