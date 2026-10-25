@@ -1,0 +1,1019 @@
+=== artifacts/momd/v5Paste.momd/v1.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 9
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    attr  rawType                      Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  name                         String         optional=None
+    attr  identifier                   String         optional=None
+    attr  createdAt                    Date           optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    rel   change                       -> ObjectChange         to-one   optional=True delete=Cascade inverse=metadata
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitShareRecordData      Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    attr  cloudKitShareRecordName      String         optional=True
+    attr  objectURI                    String         optional=None
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ChangeToken (class PasteCore.ChangeToken)
+    attr  zoneName                     String         optional=None
+    attr  zoneOwnerName                String         optional=None
+    attr  tokenData                    Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ObjectChange (class PasteCore.ObjectChange)
+    rel   metadata                     -> ObjectMetadata       to-one   optional=None delete=Nullify inverse=change
+    attr  changeType                   Int64          optional=None
+    attr  priority                     Int64          optional=None
+    attr  changedProperties            String         optional=True
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v10.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 9
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    attr  appVersion                   String         optional=None
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    UNIQUE [['identifier']]
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+    UNIQUE [['shareRecordOwner', 'shareRecordName'], ['shareRecordOwner', 'rootRecordType', 'rootRecordName']]
+    INDEX byShareRecordName: [('shareRecordName', True)] partial=$null
+    INDEX byRootRecordName: [('rootRecordName', True)] partial=$null
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  isPendingDeletion            Bool           optional=None
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    UNIQUE [['objectURI'], ['cloudKitRecordName', 'cloudKitZoneName', 'cloudKitZoneOwnerName']]
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+    INDEX byCloudKitRecordName: [('cloudKitRecordName', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+    UNIQUE [['bundleIdentifier']]
+    INDEX byBundleIdentifier: [('bundleIdentifier', True)] partial=$null
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=True delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+    UNIQUE [['identifier']]
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=None
+    UNIQUE [['objectURI']]
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    UNIQUE [['identifier']]
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v11.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 9
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    attr  appVersion                   String         optional=None
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    UNIQUE [['identifier']]
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+    UNIQUE [['shareRecordOwner', 'shareRecordName'], ['shareRecordOwner', 'rootRecordType', 'rootRecordName']]
+    INDEX byShareRecordName: [('shareRecordName', True)] partial=$null
+    INDEX byRootRecordName: [('rootRecordName', True)] partial=$null
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  isPendingDeletion            Bool           optional=None
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    UNIQUE [['objectURI'], ['cloudKitRecordName', 'cloudKitZoneName', 'cloudKitZoneOwnerName']]
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+    INDEX byCloudKitRecordName: [('cloudKitRecordName', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+    UNIQUE [['bundleIdentifier']]
+    INDEX byBundleIdentifier: [('bundleIdentifier', True)] partial=$null
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=True delete=Nullify inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+    UNIQUE [['identifier']]
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=None
+    UNIQUE [['objectURI']]
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    UNIQUE [['identifier']]
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v2.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 10
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    attr  rawType                      Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  name                         String         optional=None
+    attr  identifier                   String         optional=None
+    attr  createdAt                    Date           optional=None
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    rel   change                       -> ObjectChange         to-one   optional=True delete=Cascade inverse=metadata
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ChangeToken (class PasteCore.ChangeToken)
+    attr  zoneName                     String         optional=None
+    attr  zoneOwnerName                String         optional=None
+    attr  tokenData                    Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ObjectChange (class PasteCore.ObjectChange)
+    rel   metadata                     -> ObjectMetadata       to-one   optional=None delete=Nullify inverse=change
+    attr  changeType                   Int64          optional=None
+    attr  priority                     Int64          optional=None
+    attr  changedProperties            String         optional=True
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v3.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 11
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    attr  rawType                      Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  name                         String         optional=None
+    attr  identifier                   String         optional=None
+    attr  createdAt                    Date           optional=None
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    rel   change                       -> ObjectChange         to-one   optional=True delete=Cascade inverse=metadata
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ChangeToken (class PasteCore.ChangeToken)
+    attr  zoneName                     String         optional=None
+    attr  zoneOwnerName                String         optional=None
+    attr  tokenData                    Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ObjectChange (class PasteCore.ObjectChange)
+    rel   metadata                     -> ObjectMetadata       to-one   optional=None delete=Nullify inverse=change
+    attr  changeType                   Int64          optional=None
+    attr  priority                     Int64          optional=None
+    attr  changedProperties            String         optional=True
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=True
+    attr  objectURI                    String         optional=True
+    attr  cloudKitRecordData           Binary         optional=True
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v4.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 11
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    attr  rawType                      Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  name                         String         optional=None
+    attr  identifier                   String         optional=None
+    attr  createdAt                    Date           optional=None
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    rel   change                       -> ObjectChange         to-one   optional=True delete=Cascade inverse=metadata
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ChangeToken (class PasteCore.ChangeToken)
+    attr  zoneName                     String         optional=None
+    attr  zoneOwnerName                String         optional=None
+    attr  tokenData                    Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ObjectChange (class PasteCore.ObjectChange)
+    rel   metadata                     -> ObjectMetadata       to-one   optional=None delete=Nullify inverse=change
+    attr  changeType                   Int64          optional=None
+    attr  priority                     Int64          optional=None
+    attr  changedProperties            String         optional=True
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=True
+    attr  objectURI                    String         optional=True
+    attr  cloudKitRecordData           Binary         optional=True
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v5.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 11
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    attr  rawType                      Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  name                         String         optional=None
+    attr  identifier                   String         optional=None
+    attr  createdAt                    Date           optional=None
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    rel   change                       -> ObjectChange         to-one   optional=True delete=Cascade inverse=metadata
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ChangeToken (class PasteCore.ChangeToken)
+    attr  zoneName                     String         optional=None
+    attr  zoneOwnerName                String         optional=None
+    attr  tokenData                    Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ObjectChange (class PasteCore.ObjectChange)
+    rel   metadata                     -> ObjectMetadata       to-one   optional=None delete=Nullify inverse=change
+    attr  changeType                   Int64          optional=None
+    attr  priority                     Int64          optional=None
+    attr  changedProperties            String         optional=True
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=True
+    attr  objectURI                    String         optional=True
+    attr  cloudKitRecordData           Binary         optional=True
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v6.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 11
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    attr  appVersion                   String         optional=None
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    rel   change                       -> ObjectChange         to-one   optional=True delete=Cascade inverse=metadata
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ChangeToken (class PasteCore.ChangeToken)
+    attr  zoneName                     String         optional=None
+    attr  zoneOwnerName                String         optional=None
+    attr  tokenData                    Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ObjectChange (class PasteCore.ObjectChange)
+    rel   metadata                     -> ObjectMetadata       to-one   optional=None delete=Nullify inverse=change
+    attr  changeType                   Int64          optional=None
+    attr  priority                     Int64          optional=None
+    attr  changedProperties            String         optional=True
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=True
+    attr  objectURI                    String         optional=True
+    attr  cloudKitRecordData           Binary         optional=True
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v7.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 9
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    attr  appVersion                   String         optional=None
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=None delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=True
+    attr  objectURI                    String         optional=True
+    attr  cloudKitRecordData           Binary         optional=True
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v8.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 9
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    attr  appVersion                   String         optional=None
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=True delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=True
+    attr  objectURI                    String         optional=True
+    attr  cloudKitRecordData           Binary         optional=True
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    UNIQUE [['identifier']]
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+=== artifacts/momd/v5Paste.momd/v9.mom ===
+compiler tool version: 25249.0
+compiler Xcode version: 270000
+version identifiers: ['']
+
+entities: 9
+
+--- DeviceEntity (class PasteCore.DeviceEntity)
+    attr  appVersion                   String         optional=None
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=device
+    UNIQUE [['identifier']]
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectShare (class PasteCore.ObjectShare)
+    attr  shareRecordName              String         optional=None
+    attr  shareRecordOwner             String         optional=None
+    attr  rootRecordName               String         optional=None
+    attr  rootRecordType               String         optional=None
+    attr  shareRecordData              Binary         optional=None
+    UNIQUE [['shareRecordOwner', 'shareRecordName'], ['shareRecordOwner', 'rootRecordType', 'rootRecordName']]
+    INDEX byShareRecordName: [('shareRecordName', True)] partial=$null
+    INDEX byRootRecordName: [('rootRecordName', True)] partial=$null
+
+--- ListMetadataEntity (class PasteCore.ListMetadataEntity)
+    attr  index                        Int64          optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  identifier                   String         optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Deny inverse=metadata
+    attr  createdAt                    Date           optional=None
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectMetadata (class PasteCore.ObjectMetadata)
+    attr  cloudKitZoneOwnerName        String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=True
+    attr  cloudKitRecordName           String         optional=None
+    attr  cloudKitZoneName             String         optional=None
+    UNIQUE [['objectURI'], ['cloudKitRecordName', 'cloudKitZoneName', 'cloudKitZoneOwnerName']]
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+    INDEX byCloudKitRecordName: [('cloudKitRecordName', True)] partial=$null
+
+--- ApplicationEntity (class PasteCore.ApplicationEntity)
+    rel   items                        -> ItemEntity           to-many  optional=True delete=Nullify inverse=sourceApplication
+    attr  rawColor                     Int64          optional=None
+    attr  bundleIdentifier             String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    attr  name                         String         optional=None
+    attr  rawIcon                      Binary         optional=True
+    UNIQUE [['bundleIdentifier']]
+    INDEX byBundleIdentifier: [('bundleIdentifier', True)] partial=$null
+
+--- ItemDataEntity (class PasteCore.ItemDataEntity)
+    rel   item                         -> ItemEntity           to-one   optional=True delete=Deny inverse=data
+    attr  rawPasteboardItems           Binary         optional=None
+
+--- ListEntity (class PasteCore.ListEntity)
+    attr  rawAttributes                Binary         optional=True
+    attr  rawShareRecord               Binary         optional=True
+    attr  rawType                      Int64          optional=None
+    attr  identifier                   String         optional=None
+    attr  updatedAt                    Date           optional=True
+    attr  createdAt                    Date           optional=None
+    rel   metadata                     -> ListMetadataEntity   to-one   optional=None delete=Cascade inverse=list
+    attr  name                         String         optional=None
+    rel   items                        -> ItemEntity           to-many  optional=None delete=Nullify inverse=list
+    UNIQUE [['identifier']]
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+
+--- ObjectPendingMapping (class PasteCore.ObjectPendingMapping)
+    attr  pendingMappings              String         optional=None
+    attr  objectURI                    String         optional=None
+    attr  cloudKitRecordData           Binary         optional=None
+    UNIQUE [['objectURI']]
+    INDEX byObjectURI: [('objectURI', True)] partial=$null
+
+--- ItemEntity (class PasteCore.ItemEntity)
+    attr  updatedAt                    Date           optional=True
+    attr  rawPreview                   Binary         optional=True
+    attr  timestamp                    Date           optional=True
+    attr  rawType                      Int64          optional=None
+    attr  checksum                     String         optional=None
+    attr  title                        String         optional=True
+    attr  identifier                   String         optional=None
+    rel   data                         -> ItemDataEntity       to-one   optional=None delete=Cascade inverse=item
+    rel   sourceApplication            -> ApplicationEntity    to-one   optional=True delete=Nullify inverse=items
+    attr  displayOrderInPinboard       Int64          optional=None
+    rel   list                         -> ListEntity           to-one   optional=True delete=Nullify inverse=items
+    rel   device                       -> DeviceEntity         to-one   optional=True delete=Nullify inverse=items
+    attr  createdAt                    Date           optional=None
+    UNIQUE [['identifier']]
+    INDEX byChecksum: [('checksum', True)] partial=$null
+    INDEX byIdentifier: [('identifier', True)] partial=$null
+

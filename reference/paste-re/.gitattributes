@@ -1,0 +1,4 @@
+# Evidence files are byte-exact: never let Git rewrite line endings.
+# MANIFEST.sha256 is verified with `shasum -a 256 -c`, so CRLF conversion would
+# break every digest.
+* -text
