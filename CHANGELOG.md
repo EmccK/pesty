@@ -93,6 +93,12 @@ All notable changes to Pesty are documented here. The format is based on
   went from 2 to 6 pt.
 
 ### Fixed
+- The optimised build no longer fails on older toolchains. The hue-bucket
+  smoothing in `AppIconProvider` was one three-term expression over subscripted
+  arrays, and the type checker in Xcode 26.3 gives up on it in a release build
+  ("unable to type-check this expression in reasonable time"); it is now
+  written as statements with the types spelled out. Building from source with
+  Xcode 26.3 failed on it, which is what the first CI run hit.
 - Renaming a clip now shows on the card. The band's first line reads the clip's
   own name when it has one and its type when it does not, so a rename is visible
   in the strip instead of only in the menu that set it.

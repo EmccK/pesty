@@ -140,11 +140,15 @@ enum AppIconProvider {
         let pixelCount = Double(side * side)
         if totalHue > pixelCount * 0.02 {
             // Smooth across neighbouring buckets so a logo split between two
-            // shades does not pick the boundary.
-            let smoothed = (0..<24).map { index in
-                hueWeights[(index + 23) % 24] * 0.25
-                    + hueWeights[index]
-                    + hueWeights[(index + 1) % 24] * 0.25
+            // shades does not pick the boundary. Written as statements with the
+            // types spelled out: as one three-term expression over subscripted
+            // arrays the type checker gives up on it in release builds under
+            // older toolchains ("unable to type-check in reasonable time").
+            let smoothed: [Double] = (0..<24).map { index in
+                let previous: Double = hueWeights[(index + 23) % 24]
+                let next: Double = hueWeights[(index + 1) % 24]
+                let own: Double = hueWeights[index]
+                return previous * 0.25 + own + next * 0.25
             }
             guard let peak = smoothed.indices.max(by: { smoothed[$0] < smoothed[$1] }),
                   let best = hueBest[peak] else { return nil }
