@@ -41,5 +41,26 @@
     <string>public.app-category.productivity</string>
     <key>ITSAppUsesNonExemptEncryption</key>
     <false/>
+    <!-- Dragging a card out of the bar stamps the clip's id on the pasteboard
+         under this type, so a pinboard tab can tell one of our own cards from
+         something dragged in from another app. The drop target matches it as a
+         plain pasteboard string, which does not need a declaration, but the
+         declaration is what makes the type visible outside Pesty and keeps
+         UTType(exportedAs:) from warning in a development build. -->
+    <key>UTExportedTypeDeclarations</key>
+    <array>
+        <dict>
+            <key>UTTypeIdentifier</key>
+            <string>com.greycorelabs.pesty.clip</string>
+            <key>UTTypeDescription</key>
+            <string>Pesty Clip</string>
+            <key>UTTypeConformsTo</key>
+            <array>
+                <string>public.data</string>
+            </array>
+            <key>UTTypeTagSpecification</key>
+            <dict/>
+        </dict>
+    </array>
 </dict>
 </plist>
