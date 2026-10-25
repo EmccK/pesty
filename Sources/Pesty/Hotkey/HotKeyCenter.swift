@@ -28,16 +28,28 @@ final class HotKeyCenter {
         }, 1, &spec, nil, &handlerRef)
     }
 
+    /// Bumped on every reload so an in-flight retry chain can tell it is stale.
+    ///
+    /// `reload()` runs from the Settings pane (twice for a single shortcut
+    /// change, once per field) and from wake. A chain started by an earlier
+    /// reload captured that call's key code and modifiers, and its first act is
+    /// `unregister()` - which would take out whatever the *current* reload just
+    /// registered. Left unchecked, a stale chain either rolls the user's new
+    /// shortcut back to the old one or kills it once per retry, forever.
+    private var retryGeneration = 0
+
     /// Re-registers the global hotkey.
     ///
-    /// The old registration has to be released before the new one can take the same
-    /// combination, so a failed `RegisterEventHotKey` leaves the app with no hotkey at
-    /// all. That is unrecoverable without a relaunch, and it is one of the ways the bar
-    /// "stops opening" (issue #64). Another process can hold the combination briefly
-    /// during login or a display change, so retry a few times before giving up, and put
-    /// the old registration back if the new one will not take.
+    /// The old registration has to be released before the new one can take the
+    /// same combination, so a failed `RegisterEventHotKey` leaves the app with
+    /// no hotkey at all - unrecoverable without a relaunch, and one of the ways
+    /// the bar "stops opening" (issue #64). Another process can hold the
+    /// combination briefly during login or a display change, so retry instead of
+    /// giving up. Nothing is restored here: `unregister()` has already released
+    /// the old reference, and putting it back would hand the app a registration
+    /// Carbon no longer honours.
     func reload() {
-        let previous = hotKeyRef
+        retryGeneration &+= 1
         unregister()
 
         let keyCode = UInt32(Settings.shared.hotkeyKeyCode)
@@ -46,9 +58,10 @@ final class HotKeyCenter {
 
         if register(keyCode: keyCode, modifiers: modifiers) { return }
 
-        // Put the old one back so the user is never left without a hotkey, then retry.
-        hotKeyRef = previous
-        retryRegister(keyCode: keyCode, modifiers: modifiers, attemptsLeft: 5)
+        retryRegister(keyCode: keyCode,
+                      modifiers: modifiers,
+                      fastAttemptsLeft: Self.fastRetries,
+                      generation: retryGeneration)
     }
 
     private func register(keyCode: UInt32, modifiers: UInt32) -> Bool {
@@ -60,17 +73,41 @@ final class HotKeyCenter {
         return true
     }
 
-    private func retryRegister(keyCode: UInt32, modifiers: UInt32, attemptsLeft: Int) {
-        guard attemptsLeft > 0 else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self else { return }
-            let stale = self.hotKeyRef
+    /// How many one-second attempts come before the slow poll takes over.
+    private static let fastRetries = 5
+
+    /// Keeps trying after a transient failure instead of leaving the app deaf.
+    ///
+    /// A failed retry must not put the stale `EventHotKeyRef` back: that would
+    /// make the app believe it holds a hotkey while Carbon holds nothing, and
+    /// every later reload would unregister a dead reference.
+    ///
+    /// The chain is bounded by `generation`, not by an attempt count: a reload
+    /// that lands mid-chain bumps the counter, and this closure then exits
+    /// without touching the registration the new reload owns.
+    ///
+    /// Fast attempts come first because a login-time or display-change conflict
+    /// usually clears in a second or two; past that the poll drops to ten
+    /// seconds so a combination held by another app for hours costs nothing.
+    private func retryRegister(keyCode: UInt32,
+                               modifiers: UInt32,
+                               fastAttemptsLeft: Int,
+                               generation: Int) {
+        let fast = fastAttemptsLeft > 0
+        let delay = fast ? 1.0 : Self.slowRetryInterval
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, self.retryGeneration == generation else { return }
             self.unregister()
             if self.register(keyCode: keyCode, modifiers: modifiers) { return }
-            self.hotKeyRef = stale
-            self.retryRegister(keyCode: keyCode, modifiers: modifiers, attemptsLeft: attemptsLeft - 1)
+            self.retryRegister(keyCode: keyCode,
+                               modifiers: modifiers,
+                               fastAttemptsLeft: max(fastAttemptsLeft - 1, 0),
+                               generation: generation)
         }
     }
+
+    /// How often the chain re-checks once the fast attempts are spent.
+    private static let slowRetryInterval: TimeInterval = 10
 
     private func unregister() {
         if let ref = hotKeyRef { UnregisterEventHotKey(ref); hotKeyRef = nil }
