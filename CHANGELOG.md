@@ -110,6 +110,10 @@ All notable changes to Pesty are documented here. The format is based on
   click on any tab did nothing until the bar was hidden and reopened. The hit
   test now also checks what kind of event it is being asked about, and clears
   the stale marker when it declines.
+- The drag image matches the card it came from. Snapshotting the view dragged
+  along the selection ring, whose corner radius is larger than the card's and
+  therefore not concentric with it, so a selected card left a blue crescent at
+  each corner; the ring, the hover stroke and the shadow now stay behind.
 
 ## [1.3.0] - 2026-10-08
 

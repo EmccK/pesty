@@ -45,7 +45,12 @@ struct ClipCardView: View {
         return "\(position + 1)"
     }
 
-    var body: some View {
+    /// The card's own face: band, content, rounded corners. Shared by `body` and
+    /// by the drag preview so a change to the surface cannot land in one and
+    /// miss the other. Everything that belongs to the *view* rather than the
+    /// card - the selection ring, the shadow, the hover stroke - is applied
+    /// outside this.
+    private var cardSurface: some View {
         VStack(spacing: 0) {
             band
             contentArea
@@ -53,6 +58,10 @@ struct ClipCardView: View {
         .frame(width: side, height: side)
         .background(Theme.cardBody)
         .clipShape(RoundedRectangle(cornerRadius: Theme.cardCorner, style: .continuous))
+    }
+
+    var body: some View {
+        cardSurface
         .background {
             // Paste's selection is a capsule behind the card, not a halo: the
             // card sits inside 4 pt of accent color.
@@ -129,7 +138,18 @@ struct ClipCardView: View {
         // `onTapGesture(count: 2)` forces every single click to wait out the
         // system double-click interval before it is recognised, which measured
         // as a 350 ms gap between mouse-up and the selection landing.
-        .onDrag { ClipDragProvider.make(for: item) }
+        .onDrag {
+            ClipDragProvider.make(for: item)
+        } preview: {
+            // The drag image is the card's own surface, not the view.
+            // Snapshotting the view took everything stacked *behind* it along:
+            // the 4 pt selection ring, whose corner radius is
+            // `cardCorner + selectedCardRing` and therefore not concentric with
+            // the card's, plus the hover stroke and the shadow. The two arcs
+            // showed as a blue crescent at each corner - the "corners look
+            // wrong" that only ever appeared on a selected card.
+            cardSurface
+        }
         .contextMenu { menu }
         .task(id: item.id) { await loadPreview() }
         .onAppear { resolveBandColor() }
