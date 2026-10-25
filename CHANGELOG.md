@@ -19,6 +19,14 @@ All notable changes to Pesty are documented here. The format is based on
 - Relative timestamps and card dates follow the interface language instead of
   the system locale, so a card reads "12 seconds ago" or "12 秒钟前" to match
   the rest of the UI.
+- Pinboards carry a color, and every card in a board paints its header band in
+  that color instead of in the color of the app it was copied from - the band is
+  what tells you which board you are looking at. The palette is eight colors
+  written into the source (`Pinboard.palette`), and a new board picks one at
+  random so the tab row does not read as one blue control.
+- Right-clicking a board opens a menu with the eight swatches along its foot,
+  the way Paste does it, and the board's current color is drawn ringed. Picking
+  one recolors the board, its tab dot, and every card in it.
 
 ### Changed
 - The strip now follows Paste's banded card design: each card is a square whose
@@ -56,6 +64,24 @@ All notable changes to Pesty are documented here. The format is based on
   whatever language was active when the state last changed.
 - `scripts/build_app.sh` and `scripts/build_mas.sh` copy the SwiftPM resource
   bundle into the app, and `Info.plist` declares `en` and `zh-Hans`.
+- A pinned clip's band carries only its title. The age and the source app icon
+  belong to history - a log is read by when and where - so a pinboard card drops
+  both, and the title sits vertically centred in the band instead of hanging
+  from a fixed top inset. Centring also keeps it in the middle of the band at
+  every bar height, rather than leaving more empty band below it as the user
+  drags the bar taller.
+- A pinned clip keeps its board's band in history too. The band is the board's
+  color wherever the clip is shown, so the same clip looks the same in both
+  places and history only adds the age on top; the source app icon goes with
+  the log, so a pinned card in history drops it just as the board does.
+- Pinboard pills now show a hover fill between the selected and idle states,
+  their dots grew from 7 to 12 pt to match Paste's, and the gap between pills
+  went from 2 to 6 pt.
+
+### Fixed
+- Renaming a clip now shows on the card. The band's first line reads the clip's
+  own name when it has one and its type when it does not, so a rename is visible
+  in the strip instead of only in the menu that set it.
 
 ## [1.3.0] - 2026-10-08
 

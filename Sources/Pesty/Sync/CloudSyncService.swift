@@ -173,34 +173,28 @@ final class CloudSyncService {
         Task { try? await engine.sendChanges() }
     }
 
-    /// A clip pinned from history keeps its UUID, so one id can sit in both
-    /// containers; the pinboard copy wins (record container = board id).
+    /// Every clip is one record, and every clip is a history entry. Its
+    /// `container` field carries the pin on top of that: `history` when the clip
+    /// is only in history, a pinboard UUID when it is also on that board. That
+    /// is exactly `ClipItem.list`, so pinning rewrites a field instead of
+    /// producing a second record with the same id.
     private func desiredRecords() -> [String: Desired] {
         var out: [String: Desired] = [:]
         for board in store.pinboards {
             out[board.id.uuidString] = Desired(fingerprint: fingerprint(board), isPinboard: true)
-            for item in board.items {
-                out[item.id.uuidString] = Desired(
-                    fingerprint: fingerprint(item, container: board.id.uuidString), isPinboard: false)
-            }
         }
-        for item in store.history where out[item.id.uuidString] == nil {
+        for item in store.items {
+            let container = item.list?.uuidString ?? CKSchema.historyContainerValue
             out[item.id.uuidString] = Desired(
-                fingerprint: fingerprint(item, container: CKSchema.historyContainerValue), isPinboard: false)
+                fingerprint: fingerprint(item, container: container), isPinboard: false)
         }
         return out
     }
 
     private func lookupClip(recordName: String) -> (item: ClipItem, container: String)? {
-        for board in store.pinboards {
-            if let item = board.items.first(where: { $0.id.uuidString == recordName }) {
-                return (item, board.id.uuidString)
-            }
-        }
-        if let item = store.history.first(where: { $0.id.uuidString == recordName }) {
-            return (item, CKSchema.historyContainerValue)
-        }
-        return nil
+        guard let id = UUID(uuidString: recordName),
+              let item = store.item(withID: id) else { return nil }
+        return (item, item.list?.uuidString ?? CKSchema.historyContainerValue)
     }
 
     private func record(for recordID: CKRecord.ID) -> CKRecord? {

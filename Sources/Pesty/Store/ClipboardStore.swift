@@ -24,9 +24,22 @@ enum BarInputMode: Equatable {
 final class ClipboardStore {
     static let shared = ClipboardStore()
 
-    private(set) var history: [ClipItem] = [] {
+    /// Every clip the app knows about, in one table.
+    ///
+    /// Paste keeps a single record per copied thing and points it at the
+    /// clipboard list or at a pinboard, instead of copying the content into a
+    /// second container. Pinning therefore repoints a field; it never duplicates
+    /// the clip or its image file, and "is this pinned?" is a property of the
+    /// clip rather than a lookup across boards.
+    ///
+    /// Ordered newest-copied first, which is the history order. A pinboard's
+    /// order comes from `pinnedAt`, so one array serves both views.
+    private(set) var items: [ClipItem] = [] {
         didSet { invalidateVisibleItems() }
     }
+
+    /// Boards carry no clips of their own any more: membership lives on the
+    /// clip as `ClipItem.list`.
     private(set) var pinboards: [Pinboard] = [] {
         didSet { invalidateVisibleItems() }
     }
@@ -117,6 +130,32 @@ final class ClipboardStore {
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDir.path)
     }
 
+    // MARK: - Collections
+
+    /// Every clip the store holds, newest copied first.
+    ///
+    /// History is not a separate collection: a pinned clip is still a history
+    /// entry, so the whole array is what the history tab shows. This is the
+    /// same shape Paste has, where one record is pointed at by the clipboard
+    /// list and by at most one pinboard.
+    var history: [ClipItem] { items }
+
+    /// Clips pinned to `boardID`, in the order they were pinned (newest first).
+    func pinnedItems(in boardID: UUID) -> [ClipItem] {
+        items
+            .filter { $0.list == boardID }
+            .sorted { ($0.pinnedAt ?? $0.createdAt) > ($1.pinnedAt ?? $1.createdAt) }
+    }
+
+    /// Whether the clip is on a board. Paste shows this on the card itself,
+    /// which is the whole reason the pin lives on the clip.
+    func isPinned(_ item: ClipItem) -> Bool { item.list != nil }
+
+    func pinboard(of item: ClipItem) -> Pinboard? {
+        guard let list = item.list else { return nil }
+        return pinboards.first(where: { $0.id == list })
+    }
+
     /// Cached result of the `source` + `searchText` projection over the store's
     /// clips.
     ///
@@ -125,11 +164,10 @@ final class ClipboardStore {
     /// for its own position, which walked the whole array again. The projection
     /// is now paid once per change to its inputs instead of once per reader.
     ///
-    /// Invalidation is by writer, not by caller: `history`, `pinboards`,
-    /// `source` and `searchText` each clear it in their own `didSet`, so no
-    /// mutation site has to remember to. `didSet` fires for in-place array
-    /// mutation too (`insert`, `remove`, `removeAll`), which is how the store
-    /// edits history.
+    /// Invalidation is by writer, not by caller: `items`, `pinboards`, `source`
+    /// and `searchText` each clear it in their own `didSet`, so no mutation site
+    /// has to remember to. `didSet` fires for in-place array mutation too
+    /// (`insert`, `remove`, `removeAll`), which is how the store edits clips.
     private var cachedVisibleItems: [ClipItem]?
     /// Position of each clip in `cachedVisibleItems`, so a card's ⌘-number
     /// hint costs a dictionary lookup instead of a linear scan.
@@ -147,9 +185,11 @@ final class ClipboardStore {
         let base: [ClipItem]
         switch source {
         case .history:
-            base = history
+            base = items
         case .pinboard(let id):
-            base = pinboards.first(where: { $0.id == id })?.items ?? []
+            base = items
+                .filter { $0.list == id }
+                .sorted { ($0.pinnedAt ?? $0.createdAt) > ($1.pinnedAt ?? $1.createdAt) }
         }
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
         let result = q.isEmpty ? base : base.filter { $0.searchTextLowercased.contains(q) }
@@ -165,13 +205,21 @@ final class ClipboardStore {
         return visibleItems.first(where: { $0.id == id })
     }
 
+    // MARK: - Capture
+
     func addCaptured(_ item: ClipItem) {
-        if let idx = history.firstIndex(where: { $0.sameContent(as: item) }) {
-            if item.imageFileName != history[idx].imageFileName { deleteImageFile(item) }
-            var existing = history.remove(at: idx)
-            existing.createdAt = item.createdAt
+        var incoming = item
+        // A fresh capture is a new history entry, so it carries no pin. Copying
+        // something that is already on a board does not unpin it - the record
+        // that gets bumped to the front keeps its `list`.
+        incoming.list = nil
+        incoming.pinnedAt = nil
+        if let idx = items.firstIndex(where: { $0.sameContent(as: incoming) }) {
+            if incoming.imageFileName != items[idx].imageFileName { deleteImageFile(incoming) }
+            var existing = items.remove(at: idx)
+            existing.createdAt = incoming.createdAt
             existing.refreshDerivedState()
-            history.insert(existing, at: 0)
+            items.insert(existing, at: 0)
             if source == .history && searchText.isEmpty && multiSelectedIDs.isEmpty {
                 selectedID = existing.id
                 selectionAnchorID = existing.id
@@ -179,11 +227,11 @@ final class ClipboardStore {
             scheduleSave()
             return
         }
-        history.insert(item, at: 0)
+        items.insert(incoming, at: 0)
         trimHistory()
         if source == .history && searchText.isEmpty && multiSelectedIDs.isEmpty {
-            selectedID = item.id
-            selectionAnchorID = item.id
+            selectedID = incoming.id
+            selectionAnchorID = incoming.id
         }
         scheduleSave()
     }
@@ -192,31 +240,39 @@ final class ClipboardStore {
     /// Promote it explicitly because the clipboard monitor correctly ignores
     /// Pesty's own pasteboard writes, so a plain re-copy would otherwise leave
     /// the clip sitting wherever it already was in history.
+    ///
+    /// There is one record per clip, so promoting only re-stamps its copy time
+    /// and moves it to the front of history. A pinned clip keeps its board.
     func promoteCopiedItem(_ item: ClipItem, at date: Date = .now) {
-        if history.contains(where: { $0.sameContent(as: item) }) {
-            var copied = item
-            copied.createdAt = date
-            addCaptured(copied)
+        guard let idx = items.firstIndex(where: { $0.id == item.id }) else {
+            var copy = item
+            copy.createdAt = date
+            addCaptured(copy)
             return
         }
-        // A Pinboard card with no history twin: history gets its own copy, as
-        // it would from any other app's copy, never the pinboard's UUID.
-        addCaptured(independentCopy(of: item, createdAt: date))
+        var promoted = items.remove(at: idx)
+        promoted.createdAt = date
+        promoted.refreshDerivedState()
+        items.insert(promoted, at: 0)
+        scheduleSave()
     }
+
+    // MARK: - Retention
 
     func applyRetentionPolicy() { trimHistory(); scheduleSave() }
 
     func retentionRemovalCount(mode: HistoryRetentionMode, limit: Int, days: Int) -> Int {
+        let pruneable = items.filter { !$0.isPinned }
         switch mode {
         case .itemCount:
-            return max(0, history.count - max(20, limit))
+            return max(0, pruneable.count - max(20, limit))
         case .timeInterval:
             // days == 0 means "forever" - no age-based cutoff, just the safety cap.
             guard let cutoff = Self.retentionCutoff(daysAgo: days) else {
-                return max(0, history.count - Self.timeRetentionSafetyCap)
+                return max(0, pruneable.count - Self.timeRetentionSafetyCap)
             }
-            let byAge = history.filter { $0.createdAt < cutoff }.count
-            return byAge + max(0, (history.count - byAge) - Self.timeRetentionSafetyCap)
+            let byAge = pruneable.filter { $0.createdAt < cutoff }.count
+            return byAge + max(0, (pruneable.count - byAge) - Self.timeRetentionSafetyCap)
         }
     }
 
@@ -233,32 +289,38 @@ final class ClipboardStore {
         retentionPrunedRecordNames.contains(recordName)
     }
 
+    /// Trims history, skipping pinned clips.
+    ///
+    /// A pinned clip is still a history entry, so the limit counts only the
+    /// clips that are not on a board - otherwise filling a pinboard would
+    /// silently push real history out. This matches Paste's own promise on its
+    /// history-limit alert: "Pinned items and Pinboards won't be deleted."
     private func trimHistory() {
         var removed: [ClipItem] = []
+        let pruneable = items.indices.filter { !items[$0].isPinned }
         switch Settings.shared.historyRetentionMode {
         case .itemCount:
-            if history.count > historyLimit {
-                removed = Array(history[historyLimit...])
-                history.removeLast(history.count - historyLimit)
+            if pruneable.count > historyLimit {
+                removed = pruneable.dropFirst(historyLimit).map { items[$0] }
             }
         case .timeInterval:
             // days == 0 means "forever" - skip the age cutoff, keep the safety cap.
             if let cutoff = Self.retentionCutoff(daysAgo: Settings.shared.historyRetentionDays) {
-                let old = history.filter { $0.createdAt < cutoff }
-                if !old.isEmpty {
-                    removed += old
-                    history.removeAll { $0.createdAt < cutoff }
-                }
+                removed += pruneable.map { items[$0] }.filter { $0.createdAt < cutoff }
             }
-            if history.count > Self.timeRetentionSafetyCap {
-                removed += Array(history[Self.timeRetentionSafetyCap...])
-                history.removeLast(history.count - Self.timeRetentionSafetyCap)
+            let survivors = pruneable.count - removed.count
+            if survivors > Self.timeRetentionSafetyCap {
+                let keep = Set(pruneable.map { items[$0].id }
+                    .prefix(Self.timeRetentionSafetyCap))
+                removed += pruneable.map { items[$0] }.filter { !keep.contains($0.id) }
             }
         }
         guard !removed.isEmpty else { return }
+        let ids = Set(removed.map(\.id))
+        items.removeAll { ids.contains($0.id) }
         for item in removed { deleteImageFile(item) }
         markRetentionPruned(removed)
-        if let sel = selectedID, removed.contains(where: { $0.id == sel }) { selectFirst() }
+        if let sel = selectedID, ids.contains(sel) { selectFirst() }
         reconcileMultiSelection()
     }
 
@@ -270,42 +332,42 @@ final class ClipboardStore {
         #endif
     }
 
-    /// Deletes a clip from the collection currently on screen only. A Pinboard
-    /// is an independently saved collection: deleting a card from history must
-    /// not erase saved copies, and deleting a pinboard copy must not touch
-    /// history or other pinboards, even for legacy clips that share an id.
-    /// Deleting exactly what was removed also closes an image-file leak: the
-    /// old cross-container removal deleted entries under two file names but
-    /// cleaned up only one of them.
+    // MARK: - Deletion
+
+    /// Deletes the record itself, wherever it is being shown.
+    ///
+    /// A clip is one record that history and at most one board both point at,
+    /// so deleting it from a board has to take it out of history too - this is
+    /// Paste's `delete_item`, which "removes the underlying record for good"
+    /// from both. Unpinning is the separate, non-destructive action
+    /// (`remove_item_from_pinboard`), and it has its own menu item.
     func delete(_ item: ClipItem, permanently: Bool = false) {
         delete(items: [item], permanently: permanently)
     }
 
     /// A deletion stays undoable for five minutes unless `permanently` is
     /// set for this one (Option was held) or the setting says so for all.
-    func delete(items: [ClipItem], permanently: Bool = false) {
-        let ids = Set(items.map(\.id))
+    func delete(items targets: [ClipItem], permanently: Bool = false) {
+        let ids = Set(targets.map(\.id))
         guard !ids.isEmpty else { return }
         // Captured before removal so repeated deletes walk down the list
         // instead of snapping back to the newest clip every time.
         let deletedIndex = visibleItems.firstIndex(where: { ids.contains($0.id) })
         let selectionDeleted = selectedID.map { ids.contains($0) } ?? false
-        let placements: [ClipPlacement]
-        switch source {
-        case .history:
-            placements = Self.placements(of: ids, in: history, container: .history)
-            history.removeAll { ids.contains($0.id) }
-        case .pinboard(let boardID):
-            guard let boardIndex = pinboards.firstIndex(where: { $0.id == boardID }) else { return }
-            placements = Self.placements(of: ids, in: pinboards[boardIndex].items, container: source)
-            pinboards[boardIndex].items.removeAll { ids.contains($0.id) }
-        }
+
+        let placements = Self.placements(of: ids, in: items, container: source)
+        items.removeAll { ids.contains($0.id) }
+        // The record is gone, so its image can go too - unless the undo stack
+        // is still holding it for a restore.
         if permanently || Settings.shared.deletePermanently {
             for placement in placements { deleteImageFile(placement.item) }
-        } else {
+        }
+        // Permanent deletes are not undoable.
+        if !permanently && !Settings.shared.deletePermanently {
             undoStack.push(placements, at: Date())
             refreshUndoState()
         }
+
         multiSelectedIDs.subtract(ids)
         if multiSelectedIDs.count <= 1 { multiSelectedIDs = [] }
         if selectionDeleted {
@@ -321,12 +383,18 @@ final class ClipboardStore {
         scheduleSave()
     }
 
+    /// Erases history, sparing anything pinned.
+    ///
+    /// Pinned clips are history entries too, but Paste's erase-history alert
+    /// promises "Pinned items and Pinboards won't be deleted", so they stay -
+    /// on their boards, and in the history list.
     func clearHistory() {
-        let old = history
-        history.removeAll()
+        let cleared = items.filter { !$0.isPinned }
+        let ids = Set(cleared.map(\.id))
+        items.removeAll { ids.contains($0.id) }
         selectedID = nil
         forgetDeletions()
-        for item in old { deleteImageFile(item) }
+        for item in cleared { deleteImageFile(item) }
         reconcileMultiSelection()
         scheduleSave()
     }
@@ -343,6 +411,8 @@ final class ClipboardStore {
         }
     }
 
+    // MARK: - Undo
+
     /// Puts the newest deletion back where it was, every clip of a bulk
     /// delete at once, while its five-minute window is open.
     @discardableResult
@@ -351,16 +421,7 @@ final class ClipboardStore {
         guard let deletion = undoStack.pop(at: Date()) else { return false }
         var restored: [UUID] = []
         for placement in deletion.placements.sorted(by: { $0.index < $1.index }) {
-            switch placement.container {
-            case .history:
-                if restore(placement, into: &history) { restored.append(placement.item.id) }
-            case .pinboard(let boardID):
-                guard let i = pinboards.firstIndex(where: { $0.id == boardID }) else {
-                    deleteImageFile(placement.item)
-                    continue
-                }
-                if restore(placement, into: &pinboards[i].items) { restored.append(placement.item.id) }
-            }
+            if restore(placement) { restored.append(placement.item.id) }
         }
         refreshUndoState()
         if let id = restored.first(where: { id in visibleItems.contains(where: { $0.id == id }) }) {
@@ -374,14 +435,33 @@ final class ClipboardStore {
 
     /// A clip that came back by other means in the meantime (copied again,
     /// or synced in) is left as it is rather than doubled.
-    private func restore(_ placement: ClipPlacement, into items: inout [ClipItem]) -> Bool {
-        let item = placement.item
-        if items.contains(where: { $0.id == item.id || $0.sameContent(as: item) }) {
+    private func restore(_ placement: ClipPlacement) -> Bool {
+        var item = placement.item
+        switch placement.container {
+        case .history:
+            // Undoing a real delete restores the record as it was, pin
+            // included: deleting from history removes the clip from its board
+            // too, so bringing it back has to put the pin back as well.
+            break
+        case .pinboard(let boardID):
+            guard pinboards.contains(where: { $0.id == boardID }) else {
+                deleteImageFile(item)
+                return false
+            }
+            item.list = boardID
+        }
+        let already = items.contains { $0.id == item.id || $0.sameContent(as: item) }
+        if already {
             deleteImageFile(item)
             return false
         }
-        items.insert(item, at: placement.restorationIndex(in: items))
+        items.insert(item, at: Self.historyInsertionIndex(for: item, in: items))
         return true
+    }
+
+    /// Newest-copied first, which is the order history is read in.
+    private static func historyInsertionIndex(for item: ClipItem, in items: [ClipItem]) -> Int {
+        items.firstIndex(where: { $0.createdAt < item.createdAt }) ?? items.endIndex
     }
 
     /// Drops deletions whose window has closed, releasing the image files
@@ -413,8 +493,10 @@ final class ClipboardStore {
         refreshUndoState()
     }
 
+    // MARK: - Pinboards
+
     @discardableResult
-    func addPinboard(name: String, colorHex: String = "#5B8DEF") -> Pinboard {
+    func addPinboard(name: String, colorHex: String = Pinboard.randomColorHex) -> Pinboard {
         let b = Pinboard(name: name, colorHex: colorHex)
         pinboards.append(b)
         scheduleSave()
@@ -427,48 +509,59 @@ final class ClipboardStore {
         scheduleSave()
     }
 
+    /// Recolors a board. Every card in it reads the color off the board, so the
+    /// strip only has to re-render - nothing about the clips changes.
+    func setPinboardColor(_ hex: String, for id: UUID) {
+        guard let i = pinboards.firstIndex(where: { $0.id == id }) else { return }
+        guard pinboards[i].colorHex != hex else { return }
+        pinboards[i].colorHex = hex
+        scheduleSave()
+    }
+
+    /// Removes the board, not the clips. Every clip pinned to it goes back to
+    /// being history-only, which is what Paste promises when a pinboard is
+    /// deleted: the items stay in clipboard history.
     func deletePinboard(_ id: UUID) {
         guard let i = pinboards.firstIndex(where: { $0.id == id }) else { return }
         if case .pinboard(let cur) = source, cur == id { source = .history }
-        let removedItems = pinboards[i].items
         pinboards.remove(at: i)
-        forgetDeletions()
-        for item in removedItems { deleteImageFile(item) }
+        for index in items.indices where items[index].list == id {
+            items[index].list = nil
+            items[index].pinnedAt = nil
+        }
         reconcileMultiSelection()
         scheduleSave()
     }
 
+    /// Pins the clip to a board by repointing it. No copy is made: the clip
+    /// keeps its id, its image file and its place in history, so pinning and
+    /// unpinning are reversible without leaving duplicates behind.
+    ///
+    /// Pinning to a second board moves the clip, because a clip is on one board
+    /// at a time - the same cardinality Paste's `ItemEntity.list` has.
     func saveToPinboard(_ item: ClipItem, boardID: UUID) {
-        guard let i = pinboards.firstIndex(where: { $0.id == boardID }) else { return }
-        if pinboards[i].items.contains(where: { $0.sameContent(as: item) }) { return }
-        pinboards[i].items.insert(independentCopy(of: item, createdAt: item.createdAt), at: 0)
+        guard pinboards.contains(where: { $0.id == boardID }) else { return }
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard items[index].list != boardID else { return }
+        items[index].list = boardID
+        items[index].pinnedAt = Date()
         scheduleSave()
     }
 
-    /// A copy with its own UUID and its own image file, so no two containers
-    /// ever share an identity (one sync record per container) or a file.
-    private func independentCopy(of item: ClipItem, createdAt: Date) -> ClipItem {
-        var copy = ClipItem(
-            type: item.type,
-            text: item.text,
-            rtfData: item.rtfData,
-            htmlData: item.htmlData,
-            imageFileName: item.imageFileName,
-            imageHash: item.imageHash,
-            fileURLs: item.fileURLs,
-            colorHex: item.colorHex,
-            sourceBundleID: item.sourceBundleID,
-            sourceAppName: item.sourceAppName,
-            customTitle: item.customTitle,
-            createdAt: createdAt)
-        if let dup = duplicateImageFile(item) { copy.imageFileName = dup }
-        return copy
+    /// Takes the clip off its board. It stays in history.
+    func removeFromPinboard(_ item: ClipItem) {
+        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard items[index].list != nil else { return }
+        items[index].list = nil
+        items[index].pinnedAt = nil
+        scheduleSave()
     }
 
     func item(withID id: UUID) -> ClipItem? {
-        if let item = history.first(where: { $0.id == id }) { return item }
-        return pinboards.lazy.flatMap(\.items).first(where: { $0.id == id })
+        items.first(where: { $0.id == id })
     }
+
+    // MARK: - Content edits
 
     @discardableResult
     func updateTextContent(_ text: String, richTextData: Data? = nil, for item: ClipItem) -> Bool {
@@ -502,34 +595,15 @@ final class ClipboardStore {
     }
 
     private func updateContent(of item: ClipItem, transform: (ClipItem) -> ClipItem) -> Bool {
-        var changed = false
-        let now = Date()
+        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return false }
+        var updated = transform(items[i])
+        guard updated != items[i] else { return false }
+        updated.createdAt = Date()
+        updated.refreshDerivedState()
+        items.remove(at: i)
+        removeContentDuplicates(of: updated)
+        items.insert(updated, at: 0)
 
-        if let i = history.firstIndex(where: { $0.id == item.id }) {
-            var updated = transform(history[i])
-            if updated != history[i] {
-                updated.createdAt = now
-                updated.refreshDerivedState()
-                history.remove(at: i)
-                removeContentDuplicates(of: updated, in: &history)
-                history.insert(updated, at: 0)
-                changed = true
-            }
-        }
-
-        for b in pinboards.indices {
-            guard let i = pinboards[b].items.firstIndex(where: { $0.id == item.id }) else { continue }
-            var updated = transform(pinboards[b].items[i])
-            if updated != pinboards[b].items[i] {
-                updated.createdAt = now
-                updated.refreshDerivedState()
-                pinboards[b].items[i] = updated
-                removeContentDuplicates(of: updated, in: &pinboards[b].items)
-                changed = true
-            }
-        }
-
-        guard changed else { return false }
         retentionPrunedRecordNames.remove(item.id.uuidString)
         if selectedItem == nil { selectFirst() }
         reconcileMultiSelection()
@@ -537,11 +611,22 @@ final class ClipboardStore {
         return true
     }
 
-    private func removeContentDuplicates(of item: ClipItem, in items: inout [ClipItem]) {
+    /// Editing a clip's content can make it match another clip. Two records with
+    /// the same content in the same collection would render as twins, so the
+    /// older one goes - only within the same collection, since a clip in history
+    /// and a clip on a board are different records on purpose.
+    /// Drops any other record holding the same content.
+    ///
+    /// One record per copied thing is the whole point of the single table, so
+    /// content is unique across it rather than within a container: editing a
+    /// clip until it matches another one has to leave one record behind, the
+    /// same way capturing a duplicate does.
+    private func removeContentDuplicates(of item: ClipItem) {
         let key = contentKey(item)
         let duplicates = items.filter { $0.id != item.id && contentKey($0) == key }
         guard !duplicates.isEmpty else { return }
-        items.removeAll { $0.id != item.id && contentKey($0) == key }
+        let ids = Set(duplicates.map(\.id))
+        items.removeAll { ids.contains($0.id) }
         for duplicate in duplicates { deleteImageFile(duplicate) }
     }
 
@@ -556,18 +641,13 @@ final class ClipboardStore {
     }
 
     func setTitle(_ title: String, for item: ClipItem) {
-        if let i = history.firstIndex(where: { $0.id == item.id }) {
-            history[i].customTitle = title
-            history[i].refreshDerivedState()
-        }
-        for b in pinboards.indices {
-            if let i = pinboards[b].items.firstIndex(where: { $0.id == item.id }) {
-                pinboards[b].items[i].customTitle = title
-                pinboards[b].items[i].refreshDerivedState()
-            }
-        }
+        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return }
+        items[i].customTitle = title
+        items[i].refreshDerivedState()
         scheduleSave()
     }
+
+    // MARK: - Selection
 
     func selectFirst() { selectedID = visibleItems.first?.id }
 
@@ -692,6 +772,8 @@ final class ClipboardStore {
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.35, execute: reset)
     }
 
+    // MARK: - Images
+
     func imageURL(for item: ClipItem) -> URL? {
         guard let name = item.imageFileName else { return nil }
         return imagesDir.appendingPathComponent(name)
@@ -712,37 +794,41 @@ final class ClipboardStore {
         } catch { return nil }
     }
 
-    private func duplicateImageFile(_ item: ClipItem) -> String? {
-        guard let src = imageURL(for: item), FileManager.default.fileExists(atPath: src.path) else { return nil }
-        let name = "\(UUID().uuidString).png"
-        let dst = imagesDir.appendingPathComponent(name)
-        do {
-            try FileManager.default.copyItem(at: src, to: dst)
-            return name
-        } catch {
-            return nil
-        }
-    }
-
     private func deleteImageFile(_ item: ClipItem) {
         guard let name = item.imageFileName else { return }
-        let stillUsed = history.contains { $0.imageFileName == name }
-            || pinboards.contains { $0.items.contains { $0.imageFileName == name } }
+        let stillUsed = items.contains { $0.imageFileName == name }
             || undoStack.retainsImageFile(named: name)
         if stillUsed { return }
         if let url = imageURL(for: item) { try? FileManager.default.removeItem(at: url) }
     }
 
+    // MARK: - Persistence
+
     private struct Snapshot: Codable {
-        var history: [ClipItem]
+        var items: [ClipItem]
         var pinboards: [Pinboard]
     }
 
     private func load() {
         guard let data = try? Data(contentsOf: storeURL),
               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
-        history = snap.history
+        items = snap.items
         pinboards = snap.pinboards
+        // Boards used to be created in one fixed blue that predates the
+        // palette. Moving them onto the palette's blue keeps every board
+        // showing a selected swatch, and the two are close enough that no board
+        // visibly changes color.
+        for i in pinboards.indices where pinboards[i].colorHex.uppercased() == "#5B8DEF" {
+            pinboards[i].colorHex = "#007AFF"
+        }
+        // A clip pointing at a board that no longer exists would be invisible in
+        // both views; fall it back to history instead.
+        let boardIDs = Set(pinboards.map(\.id))
+        for i in items.indices where items[i].list != nil && !boardIDs.contains(items[i].list!) {
+            items[i].list = nil
+            items[i].pinnedAt = nil
+        }
+        items.sort { $0.createdAt > $1.createdAt }
         // Decoded clips carry empty derived fields: they are neither stored nor
         // compared, so the whole library has to be rebuilt once on load.
         refreshAllDerivedState()
@@ -753,12 +839,7 @@ final class ClipboardStore {
     /// where none of them survived, and never on a render path.
     private func refreshAllDerivedState() {
         let now = Date()
-        for i in history.indices { history[i].refreshDerivedState(now: now) }
-        for b in pinboards.indices {
-            for i in pinboards[b].items.indices {
-                pinboards[b].items[i].refreshDerivedState(now: now)
-            }
-        }
+        for i in items.indices { items[i].refreshDerivedState(now: now) }
     }
 
     private func scheduleSave() {
@@ -769,7 +850,7 @@ final class ClipboardStore {
     }
 
     func saveNow() {
-        let snap = Snapshot(history: history, pinboards: pinboards)
+        let snap = Snapshot(items: items, pinboards: pinboards)
         guard let data = try? JSONEncoder().encode(snap) else { return }
         ignoreWatchUntil = Date().addingTimeInterval(1.5)
         try? data.write(to: storeURL, options: .atomic)
@@ -779,13 +860,13 @@ final class ClipboardStore {
 
     // MARK: - Remote (CloudKit) apply
 
-    /// Applies decoded CloudKit clips. Dedupe by contentKey keeps the newer
-    /// createdAt; insertion stays newest-first. Callers update their own
-    /// last-synced bookkeeping so these changes do not loop back into sync.
+    /// Applies decoded CloudKit clips. The record's `container` field carries
+    /// the pin: `history` for a clip that is only in history, a pinboard UUID
+    /// for one that is also on that board. That is exactly `ClipItem.list`.
     func applyRemote(clips: [(ClipItem, container: String, imageSourceURL: URL?)]) {
         guard !clips.isEmpty else { return }
         for entry in clips {
-            let item = entry.0
+            var item = entry.0
             // The per-app exclusion list is local to each Mac and is not synced, so a
             // clip from an ignored app copied on another device would otherwise arrive
             // here and land in history anyway. A privacy filter that leaks across
@@ -798,10 +879,16 @@ final class ClipboardStore {
                 try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: dst.path)
             }
             if entry.container == "history" {
-                applyRemoteToHistory(item)
+                item.list = nil
             } else if let boardID = UUID(uuidString: entry.container) {
-                applyRemoteToPinboard(item, boardID: boardID)
+                if !pinboards.contains(where: { $0.id == boardID }) {
+                    pinboards.append(Pinboard(id: boardID, name: "Pinboard"))
+                }
+                item.list = boardID
+            } else {
+                continue
             }
+            applyRemoteClip(item)
         }
         trimHistory()
         if selectedID == nil { selectFirst() }
@@ -812,19 +899,18 @@ final class ClipboardStore {
     func applyRemoteDeletes(ids: [UUID]) {
         guard !ids.isEmpty else { return }
         let set = Set(ids)
-        let removedHistory = history.filter { set.contains($0.id) }
-        history.removeAll { set.contains($0.id) }
-        var removedPinned: [ClipItem] = []
-        for i in pinboards.indices {
-            removedPinned += pinboards[i].items.filter { set.contains($0.id) }
-            pinboards[i].items.removeAll { set.contains($0.id) }
-        }
+        let removed = items.filter { set.contains($0.id) }
+        items.removeAll { set.contains($0.id) }
         let removedBoards = pinboards.filter { set.contains($0.id) }
         pinboards.removeAll { set.contains($0.id) }
         if case .pinboard(let cur) = source, set.contains(cur) { source = .history }
-        for item in removedHistory + removedPinned + removedBoards.flatMap(\.items) {
-            deleteImageFile(item)
+        // Clips on a board that just disappeared go back to history rather than
+        // vanishing with it.
+        for index in items.indices where items[index].list.map({ set.contains($0) }) == true {
+            items[index].list = nil
+            items[index].pinnedAt = nil
         }
+        for item in removed { deleteImageFile(item) }
         if let sel = selectedID, set.contains(sel) { selectFirst() }
         reconcileMultiSelection()
         scheduleSave()
@@ -838,68 +924,36 @@ final class ClipboardStore {
                 pinboards[i].name = b.name
                 pinboards[i].colorHex = b.colorHex
             } else {
-                pinboards.append(Pinboard(id: b.id, name: b.name, colorHex: b.colorHex, items: []))
+                pinboards.append(Pinboard(id: b.id, name: b.name, colorHex: b.colorHex))
             }
         }
         scheduleSave()
     }
 
-    private func applyRemoteToHistory(_ item: ClipItem) {
-        let replaced = history.filter { $0.id == item.id }
-        history.removeAll { $0.id == item.id }
+    private func applyRemoteClip(_ item: ClipItem) {
+        let replaced = items.filter { $0.id == item.id }
+        items.removeAll { $0.id == item.id }
         let key = contentKey(item)
-        if let dupIdx = history.firstIndex(where: { contentKey($0) == key }) {
-            let dup = history[dupIdx]
+        // Content is unique across the whole table, not per container, so a
+        // remote copy of something already held has to collapse into one
+        // record - whichever copy is newer wins.
+        if let dupIdx = items.firstIndex(where: { contentKey($0) == key }) {
+            let dup = items[dupIdx]
             if dup.createdAt >= item.createdAt {
                 deleteImageFile(item)
                 for old in replaced { deleteImageFile(old) }
                 return
             }
-            history.remove(at: dupIdx)
+            items.remove(at: dupIdx)
             deleteImageFile(dup)
         }
         // Decoded from a sync record: no derived fields travelled with it.
         var incoming = item
         incoming.refreshDerivedState()
-        insertSortedByDate(incoming, into: &history)
+        items.insert(incoming, at: Self.historyInsertionIndex(for: incoming, in: items))
         retentionPrunedRecordNames.remove(item.id.uuidString)
         // Same-id replace: drop the old image file unless something still uses it.
         for old in replaced { deleteImageFile(old) }
-    }
-
-    private func applyRemoteToPinboard(_ item: ClipItem, boardID: UUID) {
-        // Placeholder board if the clip record arrives before its Pinboard record.
-        if !pinboards.contains(where: { $0.id == boardID }) {
-            pinboards.append(Pinboard(id: boardID, name: "Pinboard", items: []))
-        }
-        guard let i = pinboards.firstIndex(where: { $0.id == boardID }) else { return }
-        // Legacy shared-id records: a pinboard clip also evicts the same id from history.
-        var replaced = history.filter { $0.id == item.id }
-        history.removeAll { $0.id == item.id }
-        replaced += pinboards[i].items.filter { $0.id == item.id }
-        pinboards[i].items.removeAll { $0.id == item.id }
-        let key = contentKey(item)
-        if let dupIdx = pinboards[i].items.firstIndex(where: { contentKey($0) == key }) {
-            let dup = pinboards[i].items[dupIdx]
-            if dup.createdAt >= item.createdAt {
-                deleteImageFile(item)
-                for old in replaced { deleteImageFile(old) }
-                return
-            }
-            pinboards[i].items.remove(at: dupIdx)
-            deleteImageFile(dup)
-        }
-        var incoming = item
-        incoming.refreshDerivedState()
-        insertSortedByDate(incoming, into: &pinboards[i].items)
-        retentionPrunedRecordNames.remove(item.id.uuidString)
-        // Same-id replace: drop the old image file unless something still uses it.
-        for old in replaced { deleteImageFile(old) }
-    }
-
-    private func insertSortedByDate(_ item: ClipItem, into items: inout [ClipItem]) {
-        let idx = items.firstIndex(where: { $0.createdAt < item.createdAt }) ?? items.endIndex
-        items.insert(item, at: idx)
     }
 
     func setICloudSync(_ enabled: Bool) {
@@ -945,35 +999,30 @@ final class ClipboardStore {
     }
 
     private func mergeExternal(_ snap: Snapshot) {
-        let before = history.count
-        var combined = (history + snap.history).sorted { $0.createdAt > $1.createdAt }
+        var combined = (items + snap.items).sorted { $0.createdAt > $1.createdAt }
         var seen = Set<String>()
         var merged: [ClipItem] = []
         for it in combined where seen.insert(contentKey(it)).inserted { merged.append(it) }
-        history = merged
-        trimHistory()
+        items = merged
 
         var byID: [UUID: Pinboard] = Dictionary(uniqueKeysWithValues: pinboards.map { ($0.id, $0) })
-        for b in snap.pinboards {
-            if var existing = byID[b.id] {
-                for var it in b.items where !existing.items.contains(where: { $0.sameContent(as: it) }) {
-                    it.refreshDerivedState()
-                    existing.items.append(it)
-                }
-                byID[b.id] = existing
-            } else {
-                var board = b
-                for i in board.items.indices { board.items[i].refreshDerivedState() }
-                byID[b.id] = board
-            }
+        for b in snap.pinboards where byID[b.id] == nil {
+            byID[b.id] = b
         }
         pinboards = pinboards.map { byID[$0.id] ?? $0 }
             + byID.values.filter { b in !pinboards.contains(where: { $0.id == b.id }) }
 
+        // Clips whose board only exists on the other device still need a home.
+        let boardIDs = Set(pinboards.map(\.id))
+        for i in items.indices where items[i].list != nil && !boardIDs.contains(items[i].list!) {
+            items[i].list = nil
+            items[i].pinnedAt = nil
+        }
+        trimHistory()
         combined.removeAll()
         refreshAllDerivedState()
         selectFirst()
-        if history.count != before || !snap.history.isEmpty { saveNow() }
+        saveNow()
     }
 
     private func startWatching() {

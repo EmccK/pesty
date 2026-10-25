@@ -334,7 +334,7 @@ private struct HistoryRetentionSettings: View {
 
     private var storageSummary: String {
         let store = ClipboardStore.shared
-        let count = store.history.count + store.pinboards.reduce(0) { $0 + $1.items.count }
+        let count = store.items.count
         let clips = LCount(count, one: "%ld clip", many: "%ld clips")
         guard let storageBytes else { return clips }
         return "\(clips) · \(ByteCountFormatter.string(fromByteCount: storageBytes, countStyle: .file))"

@@ -368,9 +368,26 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
     /// it and hands it focus. Kept separate from `setBarSearchEditing`, which
     /// only records who owns the keystrokes and must not steal focus while the
     /// user is still arrowing through the strip.
+    ///
+    /// Focus is claimed on the next run-loop turn on purpose. The magnifier is
+    /// a SwiftUI button, so this runs inside the mouse-down; asking for first
+    /// responder now lands while the field is still at its collapsed zero
+    /// width, and the editor that AppKit installs for a zero-width field
+    /// resigns immediately. `controlTextDidEndEditing` then reports the search
+    /// as finished and the row snaps back to the magnifier - the "flash" the
+    /// click produced. Letting the expanded layout land first gives the editor
+    /// a real frame to attach to.
     func beginBarSearch() {
         store.barInputMode = .search
-        barController?.focusSearchAtEnd()
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  store.barInputMode == .search,
+                  let controller = self.barController else { return }
+            // A rejected claim means the responder chain moved on in the
+            // meantime; leaving the mode alone keeps the field visible rather
+            // than collapsing it under the pointer.
+            _ = controller.focusSearchAtEnd()
+        }
     }
 
     /// Routes every edit from the native search field through here instead
@@ -391,8 +408,24 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         if hadQuery { store.selectFirst(); searchClearedAt = Date() }
     }
 
+    /// Collapses the field back to the magnifier without hiding the bar.
+    ///
+    /// The search is a transient mode over the strip, not a permanent fixture:
+    /// going back to the cards, switching sources, or clicking empty space ends
+    /// it. `clearBarSearch` already does the work; this only adds the "is there
+    /// anything to collapse" test so a click on the panel's dead space costs
+    /// nothing while no search is running.
+    func collapseBarSearch() {
+        guard store.barInputMode == .search || !store.searchText.isEmpty else { return }
+        clearBarSearch()
+    }
+
+    /// Escape leaves the search before it leaves the bar, and collapsing the
+    /// field matters as much as emptying the query: with the row still
+    /// expanded there is no magnifier to click again, and the next Escape
+    /// would fall through to hiding the whole panel with the field on screen.
     func cancelBarSearchOrHide() {
-        if !store.searchText.isEmpty {
+        if !store.searchText.isEmpty || store.barInputMode == .search {
             clearBarSearch()
         } else {
             hideBar()

@@ -84,6 +84,7 @@
 "No Pinboards Yet" = "还没有固定板";
 "Create Pinboard…" = "新建固定板…";
 "Pin" = "固定";
+"Unpin" = "取消固定";
 "Preview" = "预览";
 "Share" = "共享";
 "Delete" = "删除";

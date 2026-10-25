@@ -15,7 +15,29 @@ struct ClipItem: Identifiable, Codable, Equatable {
     var sourceAppName: String?
 
     var customTitle: String?
+
+    /// Which collection this clip is filed under: `nil` is clipboard history,
+    /// otherwise the id of the pinboard holding it.
+    ///
+    /// History and pinboards share one array of clips, the way Paste keeps one
+    /// record per copied thing and points it at the clipboard list or a
+    /// pinboard. Pinning repoints this field instead of copying the clip, so
+    /// "is this pinned?" is readable straight off the clip and the same content
+    /// never exists twice on disk.
+    var list: UUID?
+
+    /// When the clip was copied. This is the clip's age, which is why history
+    /// sorts on it and why a re-copy moves a clip back to the front.
     var createdAt: Date
+
+    /// When the clip was pinned to its board, or `nil` while it sits in
+    /// history.
+    ///
+    /// A board shows its clips newest-pinned first, which is not the order
+    /// history keeps them in: re-copying a clip moves it to the front of
+    /// history without disturbing where it sits on its board. `createdAt`
+    /// cannot answer both questions, so pinning records its own stamp.
+    var pinnedAt: Date?
 
     // MARK: - Derived, cache-only state
     //
@@ -51,7 +73,9 @@ struct ClipItem: Identifiable, Codable, Equatable {
          sourceBundleID: String? = nil,
          sourceAppName: String? = nil,
          customTitle: String? = nil,
-         createdAt: Date = Date()) {
+         list: UUID? = nil,
+         createdAt: Date = Date(),
+         pinnedAt: Date? = nil) {
         self.id = id
         self.type = type
         self.text = text
@@ -64,9 +88,18 @@ struct ClipItem: Identifiable, Codable, Equatable {
         self.sourceBundleID = sourceBundleID
         self.sourceAppName = sourceAppName
         self.customTitle = customTitle
+        self.list = list
         self.createdAt = createdAt
+        self.pinnedAt = pinnedAt
         refreshDerivedState()
     }
+
+    /// Whether the clip sits on a pinboard.
+    ///
+    /// Pinning does not remove a clip from history: Paste keeps the record in
+    /// clipboard history and adds the pin on top, so every clip the store holds
+    /// is a history entry and `list` only names the board it is also on.
+    var isPinned: Bool { list != nil }
 
     var charCount: Int { text?.count ?? 0 }
 

@@ -43,10 +43,18 @@ enum Theme {
     // through and wash the text out.
 
     private static func dynamic(dark: NSColor, light: NSColor) -> Color {
-        Color(nsColor: NSColor(name: nil) { appearance in
+        Color(nsColor: dynamicNSColor(dark: dark, light: light))
+    }
+
+    /// The same provider, unboxed. AppKit surfaces (`NSTextField.textColor`,
+    /// attributed-string attributes) need the `NSColor` to stay dynamic, because
+    /// a `Color` forced back into an `NSColor` loses the appearance callback and
+    /// resolves once against whatever appearance is current.
+    static func dynamicNSColor(dark: NSColor, light: NSColor) -> NSColor {
+        NSColor(name: nil) { appearance in
             let isDark = appearance.bestMatch(from: [.aqua, .darkAqua]) == .darkAqua
             return isDark ? dark : light
-        })
+        }
     }
 
     /// Tint laid over the vibrancy material: frosted white in light mode,
@@ -103,6 +111,13 @@ enum Theme {
     static let chromeTextTertiary = dynamic(dark: NSColor.white.withAlphaComponent(0.34),
                                             light: NSColor.black.withAlphaComponent(0.30))
 
+    /// AppKit-side mirrors of the two chrome text tokens the native search field
+    /// needs. Kept next to the SwiftUI values so the two never drift.
+    static let chromeTextPrimaryNSColor = dynamicNSColor(dark: NSColor.white.withAlphaComponent(0.95),
+                                                         light: NSColor.black.withAlphaComponent(0.85))
+    static let chromeTextTertiaryNSColor = dynamicNSColor(dark: NSColor.white.withAlphaComponent(0.34),
+                                                          light: NSColor.black.withAlphaComponent(0.30))
+
     static let cardTextPrimary = dynamic(dark: NSColor.white.withAlphaComponent(0.92),
                                          light: NSColor.black.withAlphaComponent(0.82))
     static let cardTextSecondary = dynamic(dark: NSColor.white.withAlphaComponent(0.58),
@@ -115,6 +130,11 @@ enum Theme {
     /// color clamp in `AppIconProvider` guarantees.
     static let bandTextPrimary = Color.white
     static let bandTextSecondary = Color.white.opacity(0.72)
+    /// The same two strengths, inverted, for a band too light to carry white
+    /// text - the palette's yellow, or a bright app icon. Both are stated at
+    /// the strength white would have been at, so the pair keeps its hierarchy.
+    static let bandTextOnLight = Color.black.opacity(0.85)
+    static let bandTextSecondaryOnLight = Color.black.opacity(0.55)
 
     static let headerText = dynamic(dark: NSColor.white,
                                     light: NSColor.black.withAlphaComponent(0.85))
@@ -138,8 +158,22 @@ enum Theme {
                                  light: NSColor.black.withAlphaComponent(0.06))
     static let pillBG = dynamic(dark: NSColor.white.withAlphaComponent(0.13),
                                 light: NSColor.black.withAlphaComponent(0.075))
+    /// The lighter capsule Paste draws under a source tab while the pointer is
+    /// on it. Measured off its own bar: rgb(243) on an rgb(254) background, so
+    /// about half the weight of the selection capsule - a hovered tab reads as
+    /// "you are here" without competing with the one that is actually running.
+    static let pillHover = dynamic(dark: NSColor.white.withAlphaComponent(0.07),
+                                   light: NSColor.black.withAlphaComponent(0.043))
     static let pillSelected = dynamic(dark: NSColor.white.withAlphaComponent(0.22),
                                       light: NSColor.black.withAlphaComponent(0.12))
+
+    /// The outline Paste draws around its expanded search capsule.
+    ///
+    /// Sampled off its own bar as rgb(150, 180, 248): a softer periwinkle than
+    /// the system accent, which would come out far more saturated. It stays a
+    /// single value across appearances because the capsule it rings is either
+    /// light gray or dark gray, and the same blue reads as an outline on both.
+    static let searchFocusRing = Color(red: 150.0 / 255, green: 180.0 / 255, blue: 248.0 / 255)
 }
 
 extension Date {

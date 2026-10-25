@@ -33,6 +33,11 @@ struct ClipCardView: View {
     /// and this lookup is a cache probe whose miss rasterizes a whole icon.
     @State private var bandColor = Color(nsColor: AppIconProvider.neutral)
 
+    /// Set when the band is too light to carry white text - the palette's
+    /// yellow, and the odd bright app icon. Decided once per band color rather
+    /// than per render, since it needs the color converted back to sRGB.
+    @State private var bandNeedsDarkText = false
+
     /// "⌘3"-style label for the first nine visible cards, otherwise nil.
     private var quickPasteHint: String? {
         let position = index
@@ -129,41 +134,111 @@ struct ClipCardView: View {
         .task(id: item.id) { await loadPreview() }
         .onAppear { resolveBandColor() }
         .onChange(of: item.sourceBundleID) { _, _ in resolveBandColor() }
+        // Recoloring a board, or moving the strip into one, changes the band
+        // without changing the clip.
+        .onChange(of: boardColorHex) { _, _ in resolveBandColor() }
     }
 
     /// The colored header band: the clip's type and when it was copied on the
     /// left, the source app's own icon filling the band's right end and clipped
     /// by the card's corner, exactly as Paste draws it.
+    ///
+    /// A pinboard keeps only the title. The age belongs to history - a log is
+    /// read by when - and the icon goes with it: a pinned clip belongs to the
+    /// board rather than to the app it happened to be copied from.
     private var band: some View {
         ZStack(alignment: .topLeading) {
             bandColor
-            HStack(alignment: .top, spacing: 8) {
+            HStack(alignment: .center, spacing: 8) {
                 VStack(alignment: .leading, spacing: 1) {
-                    Text(cardTypeLabel)
+                    Text(bandTitle)
                         .font(.system(size: 13, weight: .bold))
-                        .foregroundStyle(Theme.bandTextPrimary)
-                    Text(item.cachedRelativeDate)
-                        .font(.system(size: 11))
-                        .foregroundStyle(Theme.bandTextSecondary)
+                        .foregroundStyle(bandPrimaryText)
+                    if isHistory {
+                        Text(item.cachedRelativeDate)
+                            .font(.system(size: 11))
+                            .foregroundStyle(bandSecondaryText)
+                    }
                 }
                 .lineLimit(1)
                 Spacer(minLength: 4)
             }
             .padding(.leading, Theme.cardOverlayInset)
             // The icon owns the band's right end, so the labels stop short of it.
-            .padding(.trailing, bandHeight + 6)
-            .padding(.top, 9)
+            .padding(.trailing, showsSourceIcon ? bandHeight + 6 : Theme.cardOverlayInset)
+            // Centred rather than hung from a fixed top padding. A pinboard card
+            // carries one line in a band sized for two, so top-aligning it left
+            // most of the band empty; centring also keeps the block in the
+            // middle at every bar height the user drags to, instead of drifting
+            // toward the top as the band grows.
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
 
-            HStack(spacing: 0) {
-                Spacer(minLength: 0)
-                Image(nsImage: AppIconProvider.icon(forBundleID: item.sourceBundleID))
-                    .resizable()
-                    .interpolation(.high)
-                    .frame(width: bandHeight, height: bandHeight)
+            if showsSourceIcon {
+                HStack(spacing: 0) {
+                    Spacer(minLength: 0)
+                    Image(nsImage: AppIconProvider.icon(forBundleID: item.sourceBundleID))
+                        .resizable()
+                        .interpolation(.high)
+                        .frame(width: bandHeight, height: bandHeight)
+                }
             }
         }
         .frame(height: bandHeight)
         .clipped()
+    }
+
+    /// A renamed clip is identified by its name; otherwise the band says what
+    /// the clip *is*. This is the only place a rename shows up on a text card -
+    /// its body is the text itself - so the band has to honour it.
+    private var bandTitle: String {
+        if let title = item.customTitle,
+           !title.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            return title
+        }
+        return cardTypeLabel
+    }
+
+    /// History is a log of what came from where and when, so the band carries
+    /// the source app and the age. A pinboard carries neither: a pinned clip
+    /// belongs to the board rather than to the app it was copied from, and it is
+    /// read by what it is, not by when it arrived.
+    private var isHistory: Bool {
+        if case .history = store.source { return true }
+        return false
+    }
+
+    /// Whether the band ends with the source app's icon.
+    ///
+    /// A pinned clip keeps its board's band everywhere - that is what makes the
+    /// same clip look the same in history and on its board - but the source
+    /// icon belongs to the log. Paste drops it from a pinned card in history
+    /// too, leaving the age as the only thing history adds.
+    private var showsSourceIcon: Bool {
+        isHistory && !store.isPinned(item)
+    }
+
+    /// The color of the board this clip belongs to, if it is on one.
+    ///
+    /// A pinned clip wears its board's color, not the color of the app it was
+    /// copied from: the band is what tells you which board you are looking at,
+    /// and Paste uses the same color on every card in a board. That holds in
+    /// history too - a pinned clip keeps its board's band there, so the same
+    /// clip looks the same in both places and only gains the age. Read in the
+    /// body so that pinning, unpinning, or recoloring the board re-resolves
+    /// the band.
+    private var boardColorHex: String? {
+        if case .pinboard(let id) = store.source {
+            return store.pinboards.first(where: { $0.id == id })?.colorHex
+        }
+        return store.pinboard(of: item)?.colorHex
+    }
+
+    private var bandPrimaryText: Color {
+        bandNeedsDarkText ? Theme.bandTextOnLight : Theme.bandTextPrimary
+    }
+
+    private var bandSecondaryText: Color {
+        bandNeedsDarkText ? Theme.bandTextSecondaryOnLight : Theme.bandTextSecondary
     }
 
     private var cardTypeLabel: String {
@@ -313,7 +388,26 @@ struct ClipCardView: View {
     }
 
     private func resolveBandColor() {
-        bandColor = Color(nsColor: AppIconProvider.dominantColor(forBundleID: item.sourceBundleID))
+        // A board's color wins over the source app's: the band says which board
+        // you are in, and every card in a board carries the same one.
+        let color = boardColorHex.flatMap(Color.init(hex:))
+            ?? Color(nsColor: AppIconProvider.dominantColor(forBundleID: item.sourceBundleID))
+        bandColor = color
+        bandNeedsDarkText = Self.isLight(color)
+    }
+
+    /// Whether a band color is too light for white text. The palette's yellow
+    /// is the case this exists for; the threshold sits above orange and green,
+    /// so only bands that would genuinely lose the text flip over.
+    private static func isLight(_ color: Color) -> Bool {
+        guard let rgb = NSColor(color).usingColorSpace(.sRGB) else { return false }
+        func linear(_ c: CGFloat) -> CGFloat {
+            c <= 0.040_45 ? c / 12.92 : pow((c + 0.055) / 1.055, 2.4)
+        }
+        let luminance = 0.2126 * linear(rgb.redComponent)
+            + 0.7152 * linear(rgb.greenComponent)
+            + 0.0722 * linear(rgb.blueComponent)
+        return luminance > 0.55
     }
 
     private func placeholder(_ symbol: String) -> some View {
@@ -458,7 +552,7 @@ struct ClipCardView: View {
                         Label {
                             Text(b.name)
                         } icon: {
-                            Image(nsImage: Self.pinboardMenuIcon(color: NSColor(b.color)))
+                            Image(nsImage: PinboardSwatch.dot(hex: b.colorHex))
                                 .renderingMode(.original)
                         }
                     }
@@ -470,6 +564,15 @@ struct ClipCardView: View {
             }
         } label: {
             Label(L("Pin"), systemImage: "pin")
+        }
+
+        // Paste's `remove_item_from_pinboard`: the clip goes back to being
+        // history-only, and because history and boards share one record it is
+        // still there afterwards. Only offered where it means something.
+        if store.isPinned(item) {
+            Button { store.removeFromPinboard(item) } label: {
+                Label(L("Unpin"), systemImage: "pin.slash")
+            }
         }
 
         Divider()
@@ -518,17 +621,6 @@ struct ClipCardView: View {
             let board = store.addPinboard(name: name)
             store.saveToPinboard(item, boardID: board.id)
         }
-    }
-
-    private static func pinboardMenuIcon(color: NSColor) -> NSImage {
-        let size = NSSize(width: 12, height: 12)
-        let image = NSImage(size: size, flipped: false) { rect in
-            color.setFill()
-            NSBezierPath(ovalIn: rect.insetBy(dx: 1, dy: 1)).fill()
-            return true
-        }
-        image.isTemplate = false
-        return image
     }
 }
 

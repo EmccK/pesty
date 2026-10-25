@@ -138,7 +138,6 @@ enum CKSchema {
               let id = UUID(uuidString: record.recordID.recordName),
               let name = record["name"] as? String else { return nil }
         return Pinboard(id: id, name: name,
-                        colorHex: (record["colorHex"] as? String) ?? "#5B8DEF",
-                        items: [])
+                        colorHex: (record["colorHex"] as? String) ?? "#5B8DEF")
     }
 }
