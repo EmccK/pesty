@@ -364,6 +364,15 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         store.barInputMode = mode
     }
 
+    /// Opens the search field the way Paste does: the magnifier button expands
+    /// it and hands it focus. Kept separate from `setBarSearchEditing`, which
+    /// only records who owns the keystrokes and must not steal focus while the
+    /// user is still arrowing through the strip.
+    func beginBarSearch() {
+        store.barInputMode = .search
+        barController?.focusSearchAtEnd()
+    }
+
     /// Routes every edit from the native search field through here instead
     /// of writing `store.searchText` directly, so the selection follows the
     /// filtered results as you type instead of staying on whatever was

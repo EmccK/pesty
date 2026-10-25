@@ -71,29 +71,31 @@ struct BarView: View {
     }
 
     private var topBar: some View {
-        HStack(spacing: 14) {
-            // The two builds sync through different systems: the App Store build uses
-            // CloudKit, everything else uses iCloud Drive. Gate the button on whichever
-            // one this build actually drives.
-            #if MAS
-            if settings.cloudKitSync { syncButton }
-            #else
-            if settings.iCloudSync { syncButton }
-            #endif
-            // Paste parks search + pinboards mid-bar: equal spacers keep the
-            // cluster centered between the edge actions, and PinboardTabs
-            // shrinks to its pill row so the whole cluster centers as one.
+        // Paste's own row: the search control and the sources travel together
+        // as one cluster in the middle of the bar, the transient actions sit to
+        // its left, and the overflow menu holds the trailing edge. Equal spacers
+        // keep the cluster centered between those edge actions instead of
+        // pinning the sources to the leading edge.
+        HStack(spacing: 6) {
             Spacer(minLength: 8)
-            searchIndicator
-            PinboardTabs()
-                .layoutPriority(1)
-            Spacer(minLength: 8)
+
             if store.multiSelectedIDs.count > 1 {
                 bulkDeleteButton
             }
             if store.hasUndoableDeletion {
                 undoButton
             }
+
+            searchField
+            PinboardTabs()
+
+            Spacer(minLength: 8)
+
+            #if MAS
+            if settings.cloudKitSync { syncButton }
+            #else
+            if settings.iCloudSync { syncButton }
+            #endif
             moreMenu
         }
         .padding(.horizontal, 18)
@@ -107,21 +109,39 @@ struct BarView: View {
             Image(systemName: settings.iCloudSync ? "checkmark.icloud.fill" : "arrow.triangle.2.circlepath")
                 .font(.system(size: 15, weight: .medium))
                 .foregroundStyle(settings.iCloudSync ? Theme.selection : Theme.chromeTextSecondary)
+                .frame(width: 26, height: 26)
+                .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .help(settings.iCloudSync ? L("iCloud sync on") : L("Turn on iCloud sync"))
     }
 
-    private var searchIndicator: some View {
-        HStack(spacing: searchIsActive ? 6 : 0) {
-            Image(systemName: "magnifyingglass")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(searchIsActive ? Theme.chromeTextPrimary : Theme.chromeTextSecondary)
-                .accessibilityHidden(true)
+    /// Paste's search affordance: a bare magnifying glass that expands in
+    /// place into a right-aligned field and takes focus.
+    ///
+    /// The native field stays mounted even while collapsed. The key monitor
+    /// focuses it synchronously and returns the very first keystroke to it, so
+    /// type-anywhere search never loses a character to the transition; a view
+    /// that only existed after the click would swallow that character.
+    private var searchField: some View {
+        HStack(spacing: 6) {
+            Button {
+                AppController.shared.beginBarSearch()
+            } label: {
+                Image(systemName: "magnifyingglass")
+                    .font(.system(size: 13, weight: .medium))
+                    .foregroundStyle(searchIsActive ? Theme.chromeTextPrimary : Theme.chromeTextSecondary)
+                    .frame(width: 22, height: 26)
+                    .contentShape(Rectangle())
+            }
+            .buttonStyle(.plain)
+            .help(L("Search"))
+            .accessibilityLabel(L("Search"))
+            // Collapsed, this is the only search affordance on screen.
+            .opacity(searchIsActive ? 0 : 1)
+            .frame(width: searchIsActive ? 0 : 22)
+            .allowsHitTesting(!searchIsActive)
 
-            // Kept mounted even in the compact state: the key monitor can
-            // focus it synchronously and return the same first key event, so
-            // type-anywhere search never loses a character.
             NativeBarSearchField(
                 text: searchTextBinding,
                 bridge: searchBridge,
@@ -131,10 +151,7 @@ struct BarView: View {
                 onCancel: { AppController.shared.cancelBarSearchOrHide() },
                 onMoveSelection: { store.moveSelection(by: $0) }
             )
-            .frame(minWidth: searchIsActive ? 120 : 0,
-                   idealWidth: searchIsActive ? 180 : 0,
-                   maxWidth: searchIsActive ? 260 : 0,
-                   alignment: .leading)
+            .frame(width: searchIsActive ? 200 : 0, height: 22)
             .opacity(searchIsActive ? 1 : 0)
             .allowsHitTesting(searchIsActive)
             .accessibilityHidden(!searchIsActive)
@@ -144,24 +161,26 @@ struct BarView: View {
                     AppController.shared.clearBarSearch()
                 } label: {
                     Image(systemName: "xmark.circle.fill")
-                        .font(.system(size: 12)).foregroundStyle(Theme.chromeTextTertiary)
+                        .font(.system(size: 12))
+                        .foregroundStyle(Theme.chromeTextTertiary)
+                        .frame(width: 18, height: 18)
+                        .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .help(L("Clear search"))
                 .accessibilityLabel(L("Clear search"))
             }
         }
-        .padding(.horizontal, searchIsActive ? 10 : 0)
-        .frame(height: 30)
-        .background(searchIsActive ? Theme.fieldBG : Color.clear, in: Capsule())
-        // Without this, the search field competes for space with the
-        // Pinboard tabs' ScrollView in the same HStack and can get squeezed
-        // below its intended width — an active query needs to keep its
-        // requested width over the (infinitely flexible) tab strip.
+        // Paste's expanded field is a 28 pt capsule in the same gray the tab
+        // selection uses; collapsed, the control is just the glyph.
+        .padding(.horizontal, searchIsActive ? 9 : 2)
+        .frame(height: 28)
+        .background(searchIsActive ? Theme.pillBG : Color.clear, in: Capsule())
+        // An active query keeps its width over the tab strip's ScrollView,
+        // which is infinitely flexible and would otherwise squeeze the field.
         .layoutPriority(searchIsActive ? 2 : 0)
-        // Scoped to the field. The same `.animation(value:)` placed on an
-        // ancestor would turn every geometry change in this subtree — the pill
-        // row's measured width, a card growing with the bar — into an animated
-        // one, and each of those then re-triggers the measurement.
+        // Scoped to this row. The same `.animation(value:)` on the top bar would
+        // turn every geometry change in the subtree into an animated one.
         .animation(.easeOut(duration: 0.15), value: searchIsActive)
     }
 

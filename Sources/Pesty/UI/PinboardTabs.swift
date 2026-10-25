@@ -1,27 +1,43 @@
 import SwiftUI
 
+/// The bar's source switcher, shaped like Paste's own tab row.
+///
+/// Paste does not draw a segmented control or a colored selection: every source
+/// is a dot-and-label item on a shared baseline, and the *current* one sits in a
+/// plain light-gray capsule with the label at full text strength. The create
+/// button is the last item in the same row and is drawn as a bare glyph, so the
+/// whole row reads as one cluster rather than a control group.
 struct PinboardTabs: View {
     @Bindable private var store = ClipboardStore.shared
-    // Width of the pill row itself, nil until measured. Capping the scroll
-    // view at it lets the bar center search + pills as one cluster; a longer
-    // row is capped by the proposal instead and keeps scrolling.
-    @State private var pillRowWidth: CGFloat?
+    /// The source under the pointer. Paste quietly lifts an unselected label to
+    /// full strength on hover; it never draws a hover capsule.
+    @State private var hoveredID: UUID?
+    @State private var addHovered = false
+
+    /// Stable identity for the history tab. Boards carry their own ids; the
+    /// history source does not, so it needs a constant for hover tracking.
+    private static let historyTabID = UUID(uuidString: "00000000-0000-0000-0000-0000000000A1")!
 
     var body: some View {
         ScrollView(.horizontal, showsIndicators: false) {
-            HStack(spacing: 8) {
-                pill(title: L("Clipboard History"),
-                     dot: nil,
-                     icon: "clock",
-                     selected: store.source == .history) {
-                    store.source = .history; store.selectFirst()
+            HStack(spacing: 2) {
+                tab(id: Self.historyTabID,
+                    title: L("Clipboard History"),
+                    dot: nil,
+                    icon: "clock.arrow.circlepath",
+                    selected: store.source == .history) {
+                    store.source = .history
+                    store.selectFirst()
                 }
 
                 ForEach(store.pinboards) { board in
-                    pill(title: board.name,
-                         dot: board.color,
-                         selected: store.source == .pinboard(board.id)) {
-                        store.source = .pinboard(board.id); store.selectFirst()
+                    tab(id: board.id,
+                        title: board.name,
+                        dot: board.color,
+                        icon: nil,
+                        selected: store.source == .pinboard(board.id)) {
+                        store.source = .pinboard(board.id)
+                        store.selectFirst()
                     }
                     // Rename lived only in the context menu, which nobody found (#100).
                     .simultaneousGesture(TapGesture(count: 2).onEnded { rename(board) })
@@ -34,67 +50,79 @@ struct PinboardTabs: View {
                     }
                 }
 
-                Button(action: addPinboard) {
-                    Image(systemName: "plus")
-                        .font(.system(size: 11, weight: .bold))
-                        .foregroundStyle(Theme.chromeTextSecondary)
-                        .frame(width: 26, height: 26)
-                        .background(Theme.fieldBG, in: Circle())
-                }
-                .buttonStyle(.plain)
-                .help(L("New Pinboard"))
+                addButton
             }
             .fixedSize()
-            .background(rowWidthReader)
         }
-        .frame(maxWidth: pillRowWidth)
+        // The row is a cluster: it shrinks to its content and the caller
+        // centers it, exactly like Paste centering its sources between the
+        // search control and the overflow menu.
+        .fixedSize(horizontal: true, vertical: false)
     }
 
-    /// Publishes the pill row's measured width.
-    ///
-    /// A plain `onChange` wrote the new width on every measurement pass, and
-    /// because the value drives `.frame(maxWidth:)` on the row itself, a
-    /// sub-pixel difference produced a new layout, which produced another
-    /// measurement — the classic two-way resize loop that shows up as the top
-    /// bar settling in visible steps. Only whole points are published, and only
-    /// when they actually differ.
-    private var rowWidthReader: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .onAppear { publishRowWidth(proxy.size.width) }
-                .onChange(of: proxy.size.width) { _, width in publishRowWidth(width) }
-        }
-    }
-
-    private func publishRowWidth(_ width: CGFloat) {
-        let rounded = width.rounded()
-        guard rounded > 0, abs(rounded - (pillRowWidth ?? 0)) > 0.5 else { return }
-        pillRowWidth = rounded
-    }
-
-    private func pill(title: String, dot: Color?, icon: String? = nil,
-                      selected: Bool, action: @escaping () -> Void) -> some View {
-        Button(action: action) {
+    private func tab(id: UUID,
+                     title: String,
+                     dot: Color?,
+                     icon: String?,
+                     selected: Bool,
+                     action: @escaping () -> Void) -> some View {
+        let hovered = hoveredID == id
+        return Button(action: action) {
             HStack(spacing: 6) {
                 if let icon {
                     Image(systemName: icon)
-                        .font(.system(size: 11, weight: .semibold))
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(Theme.chromeTextPrimary)
                 }
                 if let dot {
-                    Circle().fill(dot).frame(width: 7, height: 7)
+                    Circle()
+                        .fill(dot)
+                        .frame(width: 7, height: 7)
                 }
                 Text(title)
-                    .font(.system(size: 12.5, weight: .medium))
+                    .font(.system(size: 13, weight: .regular))
                     .lineLimit(1)
+                    // Paste prints the running source at full strength and the
+                    // rest at secondary; the capsule carries the selection, not
+                    // the text color.
+                    .foregroundStyle(selected || hovered
+                                     ? Theme.chromeTextPrimary
+                                     : Theme.chromeTextSecondary)
             }
-            .foregroundStyle(selected ? Theme.chromeTextPrimary : Theme.chromeTextSecondary)
-            .padding(.horizontal, 12)
-            .frame(height: 29)
-            .background(selected ? Theme.pillSelected : Theme.pillBG, in: Capsule())
+            .padding(.horizontal, 9)
+            .frame(height: 28)
+            .background {
+                if selected {
+                    Capsule().fill(Theme.pillBG)
+                }
+            }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
         .fixedSize()
-        .animation(.easeOut(duration: 0.15), value: selected)
+        .onHover { inside in
+            if inside {
+                hoveredID = id
+            } else if hoveredID == id {
+                hoveredID = nil
+            }
+        }
+        .accessibilityAddTraits(selected ? .isSelected : [])
+    }
+
+    /// Bare "+" on the tab baseline. Paste draws no capsule behind it at rest.
+    private var addButton: some View {
+        Button(action: addPinboard) {
+            Image(systemName: "plus")
+                .font(.system(size: 13, weight: .regular))
+                .foregroundStyle(addHovered ? Theme.chromeTextPrimary : Theme.chromeTextSecondary)
+                .frame(width: 28, height: 28)
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+        .onHover { addHovered = $0 }
+        .help(L("New Pinboard"))
+        .accessibilityLabel(L("New Pinboard"))
     }
 
     private func addPinboard() {
