@@ -122,6 +122,8 @@ Sources/Pesty/
   Util/                 icons, color hex, visual-effect view, launch-at-login
 scripts/                build, icon, sign + notarize
 packaging/              Info.plist, entitlements, generated artifacts
+reference/paste-re/     static-analysis notes on Paste 7.0.2 + the scripts that
+                        regenerate them (see its README; no binaries are kept)
 ```
 
 ## Pesty vs other Mac clipboard managers
