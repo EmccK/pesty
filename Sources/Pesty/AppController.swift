@@ -628,7 +628,14 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         guard let barWindow = barController?.window,
               event.window === barWindow else { return event }
 
-        if barWindow.firstResponder is BarResizeHandleResponder { return event }
+        // Only while the handle is being dragged: it takes first responder as
+        // soon as it is laid out, so keying on the type alone sent every
+        // Escape, Return, and arrow key to a view that ignores them, which is
+        // why the bar had no keyboard control at all.
+        if let handle = barWindow.firstResponder as? BarResizeHandleResponder,
+           handle.isResizing {
+            return event
+        }
 
         if handleBarCommandShortcut(event) { return nil }
 

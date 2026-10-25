@@ -24,8 +24,12 @@ enum BarInputMode: Equatable {
 final class ClipboardStore {
     static let shared = ClipboardStore()
 
-    private(set) var history: [ClipItem] = []
-    private(set) var pinboards: [Pinboard] = []
+    private(set) var history: [ClipItem] = [] {
+        didSet { invalidateVisibleItems() }
+    }
+    private(set) var pinboards: [Pinboard] = [] {
+        didSet { invalidateVisibleItems() }
+    }
 
     private var undoStack = ClipUndoStack()
     /// True while a deletion can still be undone; drives the bar's Undo button.
@@ -33,11 +37,15 @@ final class ClipboardStore {
     private var undoExpirationWorkItem: DispatchWorkItem?
 
     var source: BarSource = .history {
-        didSet { if source != oldValue { clearMultiSelection() } }
+        didSet {
+            if source != oldValue { clearMultiSelection(); invalidateVisibleItems() }
+        }
     }
     var barInputMode: BarInputMode = .cards
     var searchText: String = "" {
-        didSet { if searchText != oldValue { clearMultiSelection() } }
+        didSet {
+            if searchText != oldValue { clearMultiSelection(); invalidateVisibleItems() }
+        }
     }
     var selectedID: UUID?
     private(set) var multiSelectedIDs: Set<UUID> = []
@@ -109,14 +117,33 @@ final class ClipboardStore {
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDir.path)
     }
 
-    /// The strip reads this several times per layout pass (the list, the
-    /// animation key, the empty state, the selection index), and the search
-    /// path runs a substring test over every clip. It is computed on demand —
-    /// caching it would need an invalidation hook on every mutation of
-    /// `history`, `pinboards`, `source` and `searchText`, which is a worse
-    /// trade than the read itself: the per-item work is now a stored-string
-    /// lookup instead of five rebuilt strings.
+    /// Cached result of the `source` + `searchText` projection over the store's
+    /// clips.
+    ///
+    /// The strip asks for this repeatedly in a single layout pass — the list
+    /// itself, the animation key, the empty state — and every card used to ask
+    /// for its own position, which walked the whole array again. The projection
+    /// is now paid once per change to its inputs instead of once per reader.
+    ///
+    /// Invalidation is by writer, not by caller: `history`, `pinboards`,
+    /// `source` and `searchText` each clear it in their own `didSet`, so no
+    /// mutation site has to remember to. `didSet` fires for in-place array
+    /// mutation too (`insert`, `remove`, `removeAll`), which is how the store
+    /// edits history.
+    private var cachedVisibleItems: [ClipItem]?
+    /// Position of each clip in `cachedVisibleItems`, so a card's ⌘-number
+    /// hint costs a dictionary lookup instead of a linear scan.
+    private var cachedVisibleIndex: [UUID: Int] = [:]
+
+    private func invalidateVisibleItems() {
+        cachedVisibleItems = nil
+        cachedVisibleIndex = [:]
+    }
+
+    /// The clips the bar is currently showing: the selected pinboard or the
+    /// history, narrowed by the search field.
     var visibleItems: [ClipItem] {
+        if let cachedVisibleItems { return cachedVisibleItems }
         let base: [ClipItem]
         switch source {
         case .history:
@@ -125,8 +152,12 @@ final class ClipboardStore {
             base = pinboards.first(where: { $0.id == id })?.items ?? []
         }
         let q = searchText.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
-        guard !q.isEmpty else { return base }
-        return base.filter { $0.searchTextLowercased.contains(q) }
+        let result = q.isEmpty ? base : base.filter { $0.searchTextLowercased.contains(q) }
+        cachedVisibleItems = result
+        var index = [UUID: Int](minimumCapacity: result.count)
+        for (position, clip) in result.enumerated() { index[clip.id] = position }
+        cachedVisibleIndex = index
+        return result
     }
 
     var selectedItem: ClipItem? {
@@ -548,8 +579,12 @@ final class ClipboardStore {
     /// Position of `id` in the strip, for the ⌘1-⌘9 quick-paste hint.
     /// Returns a value past the hint range when the clip is not visible, so the
     /// hint simply does not render.
+    ///
+    /// Every card asks for this in its own body, so it must not walk the strip:
+    /// the index is built alongside `visibleItems` and consulted here.
     func visibleIndex(of id: UUID) -> Int {
-        visibleItems.firstIndex(where: { $0.id == id }) ?? Int.max
+        if cachedVisibleItems == nil { _ = visibleItems }
+        return cachedVisibleIndex[id] ?? Int.max
     }
 
     func isSelected(_ id: UUID) -> Bool {

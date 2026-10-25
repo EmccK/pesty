@@ -2,9 +2,17 @@ import AppKit
 import Carbon.HIToolbox
 import SwiftUI
 
-/// Lets the Paste Bar's local key monitor leave Escape and drag-time keys to
-/// the handle while it temporarily owns first-responder status.
-protocol BarResizeHandleResponder: AnyObject {}
+/// The bar's top-edge handle, as the key monitor sees it.
+///
+/// The handle becomes the panel's first responder as soon as it is laid out,
+/// because it is the outermost view that accepts first responder status. That
+/// is correct for its own job — a vertical drag and the ten-point accessibility
+/// steps are its keys to handle — but it must not swallow the bar's own keys
+/// while it is idle. `isResizing` is what tells the two apart.
+@MainActor
+protocol BarResizeHandleResponder: AnyObject {
+    var isResizing: Bool { get }
+}
 
 /// A drag target along the Paste Bar's top edge for resizing it vertically.
 ///
@@ -105,6 +113,8 @@ private final class BarResizeHandleView: NSView, BarResizeHandleResponder {
     private var isTrackingDrag = false
     private var ownsResizeCursor = false
     private weak var previousFirstResponder: NSResponder?
+
+    var isResizing: Bool { isTrackingDrag }
 
     override var acceptsFirstResponder: Bool { true }
     override var intrinsicContentSize: NSSize { NSSize(width: NSView.noIntrinsicMetric, height: 14) }
