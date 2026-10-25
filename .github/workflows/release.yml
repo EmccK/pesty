@@ -1,26 +1,43 @@
 name: Release
 
-# Manual only. This job needs six secrets to sign and notarize:
+# Every push to main builds a universal (arm64 + x86_64) DMG and uploads it as
+# a workflow artifact. Pushing a v* tag does the same and then publishes a
+# GitHub release with the DMG attached. workflow_dispatch re-runs it on demand:
+# with a version it publishes that release, without one it only leaves the
+# artifact.
+#
+# Signing is optional. With these secrets set the DMG is signed with a
+# Developer ID and notarized by Apple, exactly like a local
+# `scripts/release_build.sh` run:
 #   MACOS_CERT_P12_BASE64, MACOS_CERT_PASSWORD, KEYCHAIN_PASSWORD,
 #   ASC_KEY_P8_BASE64, ASC_KEY_ID, ASC_ISSUER_ID, SIGN_IDENTITY
-# None of them are set on this repository, so it used to fire on every version tag
-# and fail at the signing step. Releases are cut locally with
-# `VERSION=x.y.z BUILD=n bash scripts/release_build.sh` instead. Set the secrets and
-# switch this back to `on: push: tags: ["v*"]` if you want tag pushes to publish.
+# Without them - which is the state of this repository today - the job falls
+# back to the ad-hoc signature scripts/build_app.sh applies and
+# scripts/package_dmg.sh wraps into a DMG. That DMG installs and runs, but it is
+# not notarized, so macOS asks the downloader to clear the quarantine flag.
 on:
+  push:
+    branches: [main]
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
-        description: "Version to release, without the leading v (e.g. 1.2.0)"
-        required: true
+        description: "Version to release, without the leading v (leave empty to build the DMG artifact only)"
+        required: false
+        type: string
 
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  release:
-    name: Build, sign, notarize, publish
+  dmg:
+    name: Build DMG
     runs-on: macos-15
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
 
@@ -29,11 +46,40 @@ jobs:
         with:
           xcode-version: '26.3'
 
-      - name: Derive version
+      - name: Determine version
         id: ver
-        run: echo "version=${{ inputs.version }}" >> "$GITHUB_OUTPUT"
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            version="${GITHUB_REF_NAME#v}"
+          elif [ -n "${INPUT_VERSION:-}" ]; then
+            version="$INPUT_VERSION"
+          else
+            # Name a main build after the version the changelog is heading
+            # towards, plus the commit, rather than after 0.0.0.
+            base="$(grep -oE '^## \[[0-9]+\.[0-9]+\.[0-9]+\]' CHANGELOG.md | head -n1 | tr -d '#[] ' || true)"
+            version="${base:-0.0.0}-dev.$(git rev-parse --short HEAD)"
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
+          echo "tag=v$version" >> "$GITHUB_OUTPUT"
+          echo "Building $version ($GITHUB_REF_NAME)"
+
+      - name: Detect signing credentials
+        id: sign
+        env:
+          CERT: ${{ secrets.MACOS_CERT_P12_BASE64 }}
+        run: |
+          if [ -n "${CERT:-}" ]; then
+            echo "enabled=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "No MACOS_CERT_P12_BASE64 secret: building an ad-hoc signed, unnotarized DMG." >> "$GITHUB_STEP_SUMMARY"
+          fi
 
       - name: Import Developer ID certificate
+        if: steps.sign.outputs.enabled == 'true'
         env:
           MACOS_CERT_P12_BASE64: ${{ secrets.MACOS_CERT_P12_BASE64 }}
           MACOS_CERT_PASSWORD: ${{ secrets.MACOS_CERT_PASSWORD }}
@@ -52,15 +98,18 @@ jobs:
           rm -f /tmp/cert.p12
 
       - name: Write App Store Connect API key
+        if: steps.sign.outputs.enabled == 'true'
         env:
           ASC_KEY_P8_BASE64: ${{ secrets.ASC_KEY_P8_BASE64 }}
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
         run: |
           set -euo pipefail
           mkdir -p "$HOME/.appstoreconnect/private_keys"
-          echo "$ASC_KEY_P8_BASE64" | base64 --decode > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
+          echo "$ASC_KEY_P8_BASE64" | base64 --decode \
+            > "$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
 
-      - name: Build, sign, notarize
+      - name: Build, sign, notarize, package
+        if: steps.sign.outputs.enabled == 'true'
         env:
           VERSION: ${{ steps.ver.outputs.version }}
           BUILD: ${{ github.run_number }}
@@ -68,27 +117,70 @@ jobs:
           ASC_KEY_ID: ${{ secrets.ASC_KEY_ID }}
           ASC_ISSUER: ${{ secrets.ASC_ISSUER_ID }}
         run: |
+          set -euo pipefail
           export ASC_KEY="$HOME/.appstoreconnect/private_keys/AuthKey_${ASC_KEY_ID}.p8"
           ./scripts/release_build.sh
 
+      - name: Build and package (ad-hoc)
+        if: steps.sign.outputs.enabled != 'true'
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
+          BUILD: ${{ github.run_number }}
+        run: |
+          set -euo pipefail
+          ./scripts/build_app.sh
+          ./scripts/package_dmg.sh
+
       - name: Compute checksum
         id: sum
+        env:
+          VERSION: ${{ steps.ver.outputs.version }}
         run: |
           set -euo pipefail
-          DMG="packaging/Pesty-${{ steps.ver.outputs.version }}.dmg"
-          echo "sha256=$(shasum -a 256 "$DMG" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
-          echo "dmg=$DMG" >> "$GITHUB_OUTPUT"
+          dmg="packaging/Pesty-$VERSION.dmg"
+          test -f "$dmg" || { echo "missing $dmg" >&2; exit 1; }
+          echo "dmg=$dmg" >> "$GITHUB_OUTPUT"
+          echo "sha256=$(shasum -a 256 "$dmg" | awk '{print $1}')" >> "$GITHUB_OUTPUT"
+          ls -lh "$dmg"
 
-      - name: Create GitHub release
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: Pesty-${{ steps.ver.outputs.version }}-dmg
+          path: ${{ steps.sum.outputs.dmg }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Publish release
+        if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.version != '')
         env:
           GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ steps.ver.outputs.version }}
+          TAG: ${{ steps.ver.outputs.tag }}
+          DMG: ${{ steps.sum.outputs.dmg }}
+          SHA256: ${{ steps.sum.outputs.sha256 }}
+          SIGNED: ${{ steps.sign.outputs.enabled }}
         run: |
           set -euo pipefail
-          gh release create "v${{ steps.ver.outputs.version }}" \
-            "${{ steps.sum.outputs.dmg }}" \
-            --title "Pesty ${{ steps.ver.outputs.version }}" \
-            --notes "Pesty ${{ steps.ver.outputs.version }}
+          if [ "$SIGNED" = "true" ]; then
+            sign_note="Signed with a Developer ID and notarized by Apple."
+          else
+            sign_note="Not notarized: this build carries an ad-hoc signature, so macOS blocks the first launch. Drag Pesty into /Applications, then clear the quarantine flag with: xattr -dr com.apple.quarantine /Applications/Pesty.app (or Control-click Pesty and choose Open)."
+          fi
+          cat > /tmp/notes.md <<EOF
+          Pesty $VERSION
 
-          SHA-256: \`${{ steps.sum.outputs.sha256 }}\`
+          Universal binary for Apple silicon and Intel, macOS 14 or later.
 
-          Signed with Developer ID and notarized by Apple. Install via Homebrew (\`brew install --cask momenbasel/pesty/pesty\`) or download the DMG below."
+          $sign_note
+
+          SHA-256: $SHA256
+          EOF
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            echo "Release $TAG exists; replacing its DMG."
+            gh release upload "$TAG" "$DMG" --clobber
+          else
+            gh release create "$TAG" "$DMG" \
+              --title "Pesty $VERSION" \
+              --notes-file /tmp/notes.md
+          fi

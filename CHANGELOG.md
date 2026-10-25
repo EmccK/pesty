@@ -67,6 +67,13 @@ All notable changes to Pesty are documented here. The format is based on
   whatever language was active when the state last changed.
 - `scripts/build_app.sh` and `scripts/build_mas.sh` copy the SwiftPM resource
   bundle into the app, and `Info.plist` declares `en` and `zh-Hans`.
+- Pushing to `main` now builds the app on GitHub Actions: a universal DMG is
+  uploaded as a workflow artifact, and pushing a `v*` tag publishes it as a
+  GitHub release. The job signs with a Developer ID and notarizes when the
+  certificate secrets are configured and otherwise falls back to the ad-hoc
+  signature, which `scripts/package_dmg.sh` wraps into the DMG - so the pipeline
+  works before any certificates exist, and the DMG it produces asks the
+  downloader to clear the quarantine flag.
 - The search field expands in place, the way Paste's does: a single width drives
   the capsule and the field together, so the magnifier stays put while the pill
   grows out to its right instead of the two swapping places. The expanded state
