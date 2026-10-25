@@ -901,7 +901,6 @@ final class ClipboardStore {
         let set = Set(ids)
         let removed = items.filter { set.contains($0.id) }
         items.removeAll { set.contains($0.id) }
-        let removedBoards = pinboards.filter { set.contains($0.id) }
         pinboards.removeAll { set.contains($0.id) }
         if case .pinboard(let cur) = source, set.contains(cur) { source = .history }
         // Clips on a board that just disappeared go back to history rather than
