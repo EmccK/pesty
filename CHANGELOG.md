@@ -6,6 +6,8 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+## [1.4.0] - 2026-10-25
+
 ### Added
 - Chinese (Simplified) localization, alongside English. Every user-facing
   string in the app - the strip, card menus, the editor, every Settings pane,
@@ -135,6 +137,8 @@ All notable changes to Pesty are documented here. The format is based on
   along the selection ring, whose corner radius is larger than the card's and
   therefore not concentric with it, so a selected card left a blue crescent at
   each corner; the ring, the hover stroke and the shadow now stay behind.
+
+[1.4.0]: https://github.com/EmccK/pesty/releases/tag/v1.4.0
 
 ## [1.3.0] - 2026-10-08
 
