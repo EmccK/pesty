@@ -355,6 +355,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
 
     func hideBar() {
         stopKeyMonitor()
+        // A drag that never landed must not leave its id stamped for the next
+        // drop to pick up.
+        ClipDragProvider.clearDraggedItem()
         barController?.hide()
     }
 

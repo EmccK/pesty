@@ -27,6 +27,9 @@ All notable changes to Pesty are documented here. The format is based on
 - Right-clicking a board opens a menu with the eight swatches along its foot,
   the way Paste does it, and the board's current color is drawn ringed. Picking
   one recolors the board, its tab dot, and every card in it.
+- Dragging a card onto a board's tab pins it there. The tab highlights while the
+  card hovers over it, and dropping moves the clip the same way the card menu's
+  "Pin" does: no copy, and the clip stays in history.
 
 ### Changed
 - The strip now follows Paste's banded card design: each card is a square whose
@@ -91,6 +94,22 @@ All notable changes to Pesty are documented here. The format is based on
   pill or a tab is chosen. Clicks on the tabs still collapse on mouse-up rather
   than mouse-down, so the row does not widen out from under the pointer before
   the click lands.
+- Dropping a card on a board pins it on the frame the mouse comes up. A SwiftUI
+  drop target can only answer through `NSItemProvider`, and the drag session
+  that owns the drag image lives until that round trip finishes - measured at
+  334-411 ms here, with the main thread idle and the pin itself taking 0.1 ms,
+  so the card sat frozen for a third of a second after the release. The board
+  tab now receives through AppKit's `NSDraggingDestination`, whose
+  `performDragOperation` returns synchronously inside the mouse-up and ends the
+  session there, and the drag carries the clip's id so the drop moves the clip
+  already in the store.
+- A cancelled drag no longer leaves the board row deaf. The drop target sits
+  invisibly over every tab and only claims mouse events while one of our cards
+  is in flight; a drag cancelled inside the strip, or released over another app,
+  never told it the drag was over, so it kept holding the whole tab and the next
+  click on any tab did nothing until the bar was hidden and reopened. The hit
+  test now also checks what kind of event it is being asked about, and clears
+  the stale marker when it declines.
 
 ## [1.3.0] - 2026-10-08
 
