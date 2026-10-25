@@ -110,6 +110,14 @@ All notable changes to Pesty are documented here. The format is based on
   click on any tab did nothing until the bar was hidden and reopened. The hit
   test now also checks what kind of event it is being asked about, and clears
   the stale marker when it declines.
+- The global hotkey no longer goes permanently deaf. A failed registration used
+  to be retried five times and then abandoned, which is indistinguishable from
+  the shortcut having stopped working until the app was relaunched; it now falls
+  back to a ten-second poll and picks the combination up whenever whatever held
+  it lets go. Changing the shortcut while a retry was in flight also used to
+  lose the new one - the older chain re-registered the previous combination, or
+  cancelled the new one every second - and a reload now retires every chain
+  started before it.
 - The drag image matches the card it came from. Snapshotting the view dragged
   along the selection ring, whose corner radius is larger than the card's and
   therefore not concentric with it, so a selected card left a blue crescent at
