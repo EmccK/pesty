@@ -68,12 +68,16 @@ struct NativeBarSearchField: NSViewRepresentable {
         field.lineBreakMode = .byTruncatingTail
         field.placeholderString = L("Search")
         field.font = .systemFont(ofSize: 13, weight: .medium)
-        // Matches Theme.chromeTextPrimary (Color.white.opacity(0.95)).
-        field.textColor = NSColor.white.withAlphaComponent(0.95)
-        let placeholderColor = NSColor.white.withAlphaComponent(0.55)
+        // Both colors come from Theme rather than being pinned to white: the
+        // toolbar is a light surface in light mode and a dark one in dark mode,
+        // and a hardcoded white placeholder disappeared into the light panel.
+        // NSTextField resolves dynamic NSColors against its effective appearance,
+        // so assigning the dynamic value here is enough - no manual refresh on
+        // appearance change is required.
+        field.textColor = Theme.chromeTextPrimaryNSColor
         field.placeholderAttributedString = NSAttributedString(
             string: L("Search"),
-            attributes: [.foregroundColor: placeholderColor]
+            attributes: [.foregroundColor: Theme.chromeTextTertiaryNSColor]
         )
         field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
         bridge.install(field)
@@ -92,9 +96,12 @@ struct NativeBarSearchField: NSViewRepresentable {
             field.placeholderString = placeholder
             field.placeholderAttributedString = NSAttributedString(
                 string: placeholder,
-                attributes: [.foregroundColor: NSColor.white.withAlphaComponent(0.55)]
+                attributes: [.foregroundColor: Theme.chromeTextTertiaryNSColor]
             )
         }
+        // A dynamic NSColor only follows appearance changes if it is reassigned
+        // after the resolve; the field caches the resolved color at draw time.
+        field.textColor = Theme.chromeTextPrimaryNSColor
     }
 
     static func dismantleNSView(_ field: NSTextField, coordinator: Coordinator) {

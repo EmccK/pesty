@@ -27,8 +27,21 @@ final class BarPanel: NSPanel {
         }
         // Anything the strip does not claim — a search field, the pinboard
         // row, the traffic-button area — must keep its normal behaviour, so
-        // only a click that lands on a card is consumed.
-        guard let clipID = BarClickRouter.shared.clipID(atWindowPoint: windowPoint(of: event)) else {
+        // only a click that lands on a card is consumed. Everything else is
+        // forwarded, and the one piece of state this handler owns outside the
+        // strip is whether the search field should still be open.
+        let point = windowPoint(of: event)
+        guard let clipID = BarClickRouter.shared.clipID(atWindowPoint: point) else {
+            // Not a card. A click on the panel's dead space puts the row back
+            // the way it rests: Paste's expanded field is a transient mode, so
+            // clicking away from it collapses it rather than leaving a
+            // half-width field parked over the strip. The field and the source
+            // row are excluded because they own their own clicks - collapsing
+            // under the pointer would slide the tab the user is about to hit
+            // out from under the mouse before mouse-up could complete it.
+            if !BarClickRouter.shared.isOnChrome(point) {
+                AppController.shared.collapseBarSearch()
+            }
             super.sendEvent(event)
             return
         }

@@ -32,7 +32,32 @@ final class BarClickRouter {
 
     static let shared = BarClickRouter()
 
+    /// The bar's own controls, as far as the click handler is concerned.
+    ///
+    /// Only the two regions a click can land on *while the search field is
+    /// open* need naming: the field itself and the source row. Everything else
+    /// in the panel is either a card (handled separately) or dead space.
+    enum Chrome: String, CaseIterable {
+        case search
+        case tabs
+    }
+
     private var slots: [CardSlot] = []
+    private var chromeFrames: [Chrome: CGRect] = [:]
+
+    /// Records one control's rectangle in window coordinates, the same space
+    /// the card slots use.
+    func registerChrome(_ region: Chrome, frame: CGRect) {
+        if chromeFrames[region] != frame { chromeFrames[region] = frame }
+    }
+
+    /// True when `point` landed on a control the panel must not treat as dead
+    /// space. An unregistered region simply is not on screen yet, which reads
+    /// as dead space - the safe answer, because the search is only ever
+    /// collapsed when it is open, and an open field has registered itself.
+    func isOnChrome(_ point: CGPoint) -> Bool {
+        chromeFrames.values.contains { $0.contains(point) }
+    }
 
     /// Records one card's rectangle. Called from the card's layout pass, so the
     /// router always answers with the geometry the user is looking at.

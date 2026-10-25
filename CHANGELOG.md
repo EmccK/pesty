@@ -64,6 +64,10 @@ All notable changes to Pesty are documented here. The format is based on
   whatever language was active when the state last changed.
 - `scripts/build_app.sh` and `scripts/build_mas.sh` copy the SwiftPM resource
   bundle into the app, and `Info.plist` declares `en` and `zh-Hans`.
+- The search field expands in place, the way Paste's does: a single width drives
+  the capsule and the field together, so the magnifier stays put while the pill
+  grows out to its right instead of the two swapping places. The expanded state
+  is a blue-ringed capsule with the same fill the tab pills use.
 - A pinned clip's band carries only its title. The age and the source app icon
   belong to history - a log is read by when and where - so a pinboard card drops
   both, and the title sits vertically centred in the band instead of hanging
@@ -82,6 +86,11 @@ All notable changes to Pesty are documented here. The format is based on
 - Renaming a clip now shows on the card. The band's first line reads the clip's
   own name when it has one and its type when it does not, so a rename is visible
   in the strip instead of only in the menu that set it.
+- The search field collapses when a click lands anywhere that is not a card or
+  the search and tab chrome - empty strip space included - and when a pinboard
+  pill or a tab is chosen. Clicks on the tabs still collapse on mouse-up rather
+  than mouse-down, so the row does not widen out from under the pointer before
+  the click lands.
 
 ## [1.3.0] - 2026-10-08
 

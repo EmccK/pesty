@@ -79,15 +79,26 @@ struct BarView: View {
         HStack(spacing: 6) {
             Spacer(minLength: 8)
 
-            if store.multiSelectedIDs.count > 1 {
-                bulkDeleteButton
-            }
-            if store.hasUndoableDeletion {
-                undoButton
+            // The transient actions give the row back to the search control while
+            // a query is running: Paste's expanded state is the field plus a
+            // minimized source row, and a "Delete 3" pill next to a half-width
+            // field reads as two competing toolbars.
+            if !searchIsActive {
+                if store.multiSelectedIDs.count > 1 {
+                    bulkDeleteButton
+                }
+                if store.hasUndoableDeletion {
+                    undoButton
+                }
             }
 
             searchField
-            PinboardTabs()
+                // The window-level click handler needs to know where this
+                // control is, so a click on the panel's dead space can be told
+                // apart from a click that belongs to the field.
+                .background(ChromeFrameReporter(region: .search))
+            PinboardTabs(collapsed: searchIsActive)
+                .background(ChromeFrameReporter(region: .tabs))
 
             Spacer(minLength: 8)
 
@@ -117,30 +128,64 @@ struct BarView: View {
     }
 
     /// Paste's search affordance: a bare magnifying glass that expands in
-    /// place into a right-aligned field and takes focus.
+    /// place into a field and takes focus.
     ///
     /// The native field stays mounted even while collapsed. The key monitor
     /// focuses it synchronously and returns the very first keystroke to it, so
     /// type-anywhere search never loses a character to the transition; a view
     /// that only existed after the click would swallow that character.
+    /// Paste expands this control by swapping Auto Layout constraint sets
+    /// (`activeSearchConstraints`), so one container width interpolates between
+    /// the glyph and the field. A SwiftUI equivalent that flipped two sibling
+    /// views between `width 22` and `width 200` had no intermediate state to
+    /// animate - both nodes were simply replaced, and the row snapped.
+    ///
+    /// So the group is a single container with one interpolating width, and the
+    /// children are positioned inside it. The magnifier does not move: Paste
+    /// keeps it inside the expanded capsule at the inset it rests at, and the
+    /// field grows into the room to its right instead of replacing it.
     private var searchField: some View {
-        HStack(spacing: 6) {
+        // Resting, the control is a 28 pt square holding the glyph. Expanded,
+        // Paste's field measures ~470 pt including its focus ring.
+        let collapsedWidth: CGFloat = 28
+        let expandedWidth: CGFloat = 470
+        let width = searchIsActive ? expandedWidth : collapsedWidth
+
+        let sideInset: CGFloat = 10
+        let glyphWidth: CGFloat = 16
+        let glyphGap: CGFloat = 6
+        let trailingWidth: CGFloat = 18
+        let trailingGap: CGFloat = 6
+        // What the field does not get: the glyph's slot on the left, the
+        // trailing control's on the right.
+        let leadingChrome = sideInset + glyphWidth + glyphGap
+        let trailingChrome = trailingGap + trailingWidth + sideInset
+        // Collapsed, the field keeps a real width rather than collapsing to
+        // zero: it stays mounted so the key monitor can hand it the first
+        // keystroke, and the editor AppKit installs for a zero-width field
+        // resigns the moment it is attached.
+        let fieldWidth = searchIsActive
+            ? max(0, width - leadingChrome - trailingChrome)
+            : collapsedWidth
+
+        return ZStack(alignment: .leading) {
             Button {
                 AppController.shared.beginBarSearch()
             } label: {
                 Image(systemName: "magnifyingglass")
                     .font(.system(size: 13, weight: .medium))
-                    .foregroundStyle(searchIsActive ? Theme.chromeTextPrimary : Theme.chromeTextSecondary)
-                    .frame(width: 22, height: 26)
+                    .foregroundStyle(Theme.chromeTextSecondary)
+                    .frame(width: glyphWidth, height: 26)
+                    // The hit target covers the inset too, so the resting
+                    // control is a comfortable square rather than the 13 pt
+                    // symbol inside it.
+                    .padding(.leading, sideInset)
+                    .frame(width: leadingChrome, height: 28, alignment: .leading)
                     .contentShape(Rectangle())
             }
             .buttonStyle(.plain)
             .help(L("Search"))
             .accessibilityLabel(L("Search"))
-            // Collapsed, this is the only search affordance on screen.
-            .opacity(searchIsActive ? 0 : 1)
-            .frame(width: searchIsActive ? 0 : 22)
-            .allowsHitTesting(!searchIsActive)
 
             NativeBarSearchField(
                 text: searchTextBinding,
@@ -151,7 +196,11 @@ struct BarView: View {
                 onCancel: { AppController.shared.cancelBarSearchOrHide() },
                 onMoveSelection: { store.moveSelection(by: $0) }
             )
-            .frame(width: searchIsActive ? 200 : 0, height: 22)
+            // The field occupies whatever the glyph and the trailing control
+            // are not using, so its own width is derived from the one animated
+            // value instead of being animated separately.
+            .frame(width: fieldWidth, height: 22, alignment: .leading)
+            .padding(.leading, searchIsActive ? leadingChrome : 0)
             .opacity(searchIsActive ? 1 : 0)
             .allowsHitTesting(searchIsActive)
             .accessibilityHidden(!searchIsActive)
@@ -163,25 +212,35 @@ struct BarView: View {
                     Image(systemName: "xmark.circle.fill")
                         .font(.system(size: 12))
                         .foregroundStyle(Theme.chromeTextTertiary)
-                        .frame(width: 18, height: 18)
+                        .frame(width: trailingWidth, height: trailingWidth)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
                 .help(L("Clear search"))
                 .accessibilityLabel(L("Clear search"))
+                .padding(.trailing, sideInset)
+                .frame(width: width, alignment: .trailing)
             }
         }
-        // Paste's expanded field is a 28 pt capsule in the same gray the tab
+        .frame(width: width, height: 28, alignment: .leading)
+        // Paste's expanded field is a capsule in the same gray the tab
         // selection uses; collapsed, the control is just the glyph.
-        .padding(.horizontal, searchIsActive ? 9 : 2)
-        .frame(height: 28)
         .background(searchIsActive ? Theme.pillBG : Color.clear, in: Capsule())
+        // ...outlined while it holds the keyboard, the way a focused field is
+        // everywhere else. The outline hugs the capsule instead of using
+        // AppKit's focus ring, which would draw a second rectangle around the
+        // inner text field and leave the glyph outside it.
+        .overlay {
+            if searchIsActive {
+                Capsule().strokeBorder(Theme.searchFocusRing, lineWidth: 3)
+            }
+        }
         // An active query keeps its width over the tab strip's ScrollView,
         // which is infinitely flexible and would otherwise squeeze the field.
         .layoutPriority(searchIsActive ? 2 : 0)
         // Scoped to this row. The same `.animation(value:)` on the top bar would
         // turn every geometry change in the subtree into an animated one.
-        .animation(.easeOut(duration: 0.15), value: searchIsActive)
+        .animation(.easeOut(duration: 0.18), value: searchIsActive)
     }
 
     private var bulkDeleteButton: some View {
@@ -481,6 +540,32 @@ struct RectCorner: OptionSet {
 }
 
 // MARK: - AppKit probes
+
+/// Publishes one control's rectangle to the click router.
+///
+/// The router works in window coordinates at `sendEvent` time, before SwiftUI
+/// has decided who owns the click, so it cannot ask the layout where the search
+/// capsule or the source row ended up. Reporting the frames as they settle is
+/// cheaper than a hit test that would come back with the hosting view and no
+/// answer at all: SwiftUI buttons are not separate `NSView`s.
+struct ChromeFrameReporter: View {
+    let region: BarClickRouter.Chrome
+
+    var body: some View {
+        GeometryReader { proxy in
+            Color.clear
+                .onAppear { publish(proxy.frame(in: .global)) }
+                // The search capsule changes width whenever it opens or closes,
+                // so the recorded rectangle has to follow it or the collapsed
+                // control would keep claiming the expanded field's span.
+                .onChange(of: proxy.frame(in: .global)) { _, frame in publish(frame) }
+        }
+    }
+
+    private func publish(_ frame: CGRect) {
+        BarClickRouter.shared.registerChrome(region, frame: frame)
+    }
+}
 
 /// Hands the enclosing `NSScrollView` to SwiftUI.
 ///
