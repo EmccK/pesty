@@ -113,31 +113,7 @@ struct ClipCardView: View {
         .animation(.easeOut(duration: 0.12), value: hovering)
         .contentShape(Rectangle())
         .onHover { hovering = $0 }
-        // Click selects immediately, double-click pastes.
-        //
-        // The stacked `onTapGesture` pair this replaces made a single click wait
-        // out the double-click interval before it fired: SwiftUI cannot tell a
-        // single tap from the first half of a double tap until the second click
-        // does not arrive, so selection landed ~0.25 s after the mouse came up.
-        // That delay is what reads as "the card reacts a moment later".
-        //
-        // Selecting on the first click and pasting on the second removes the
-        // wait entirely. The comment that used to justify the stacking warned
-        // that selecting early would let the strip scroll the card out from
-        // under the second click; that is no longer possible, because the strip
-        // only scrolls when the selection is off screen, and a card you just
-        // clicked is by definition on screen.
-        .simultaneousGesture(
-            TapGesture().modifiers(.shift).onEnded { store.extendSelection(to: item.id) }
-        )
-        .simultaneousGesture(
-            TapGesture().modifiers(.command).onEnded { store.toggleSelection(item.id) }
-        )
-        // Clicks are routed by `BarPanel.sendEvent` — see `BarClickRouter`. A
-        // tap gesture cannot be used for the plain click here: pairing it with
-        // `onTapGesture(count: 2)` forces every single click to wait out the
-        // system double-click interval before it is recognised, which measured
-        // as a 350 ms gap between mouse-up and the selection landing.
+        // Clicks are routed by `BarPanel.sendEvent` — see `BarClickRouter`.
         .onDrag {
             ClipDragProvider.make(for: item)
         } preview: {

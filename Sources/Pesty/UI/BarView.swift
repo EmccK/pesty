@@ -306,11 +306,6 @@ struct BarView: View {
     /// leading edge instead would scroll the horizontal inset out of view.
     private static let stripStartID = "stripStart"
 
-    /// Coordinate space the cards report their frames in: the scroll view's
-    /// own content space, so a frame's `minX` moves as the strip scrolls and
-    /// `0...stripWidth` is the visible window.
-    static let stripSpace = "pestyStripSpace"
-
     private var strip: some View {
         GeometryReader { geometry in
             let side = Self.cardSide(forStripHeight: geometry.size.height)
@@ -334,11 +329,10 @@ struct BarView: View {
                             ClipCardView(item: item, side: side)
                                 .id(item.id)
                                 .background {
-                                    // Reports the card's rectangle in content
-                                    // space so the window-level click router can
-                                    // answer "which clip is under the pointer"
-                                    // without asking the layout mid-click.
-                                    CardSlotReporter(id: item.id, side: side)
+                                    // AppKit probe the click router reads at
+                                    // mouse-down, so a scrolled card still
+                                    // reports where it is now.
+                                    CardSlotReporter(id: item.id)
                                 }
                                 .transition(.asymmetric(
                                     insertion: .scale(scale: 0.92).combined(with: .opacity),
@@ -567,48 +561,6 @@ struct ChromeFrameReporter: View {
     }
 }
 
-/// Hands the enclosing `NSScrollView` to SwiftUI.
-///
-/// SwiftUI's own coordinate spaces were not enough to answer "is this card on
-/// screen": a preference measured with `.named(...)` reports offsets in
-/// whatever space that name resolves to, and the values it produced for a
-/// scrolled strip did not track the clip view's origin. The scroll view can
-/// answer exactly and for free, because it already knows its bounds and its
-/// content view.
-struct CardSlotReporter: View {
-    let id: UUID
-    let side: CGFloat
-
-    var body: some View {
-        GeometryReader { proxy in
-            Color.clear
-                .onAppear { publish(proxy) }
-                .onChange(of: proxy.frame(in: .named(BarView.stripSpace)).origin) { _, _ in
-                    publish(proxy)
-                }
-                // The strip's content space origin moves with the scroll
-                // offset, so the reported rectangle also has to be refreshed
-                // when the clip view scrolls; without this a card's recorded
-                // span goes stale the moment the strip moves.
-                .onReceive(NotificationCenter.default.publisher(
-                    for: NSView.boundsDidChangeNotification, object: nil)
-                    .receive(on: RunLoop.main)) { _ in
-                        publish(proxy)
-                    }
-        }
-    }
-
-    /// Records both spaces. `content` answers "which card is here" once the
-    /// click has already been converted to strip content coordinates, and
-    /// `window` answers it directly, which is what the router prefers because
-    /// it needs no conversion at all and therefore cannot drift.
-    private func publish(_ proxy: GeometryProxy) {
-        let content = proxy.frame(in: .named(BarView.stripSpace))
-        let global = proxy.frame(in: .global)
-        BarClickRouter.shared.register(id: id, contentFrame: content, globalFrame: global)
-    }
-}
-
 /// The strip's own horizontal scroller.
 ///
 /// `enclosingScrollView` finds nothing because SwiftUI's `ScrollView` does not
@@ -634,6 +586,7 @@ func findStripScrollView(in root: NSView) -> NSScrollView? {
     return best
 }
 
+/// Hands the enclosing `NSScrollView` to SwiftUI.
 struct StripScrollViewProbe: NSViewRepresentable {
     let onResolve: (NSScrollView?) -> Void
 
@@ -682,10 +635,3 @@ struct StripScrollViewProbe: NSViewRepresentable {
         }
     }
 }
-
-/// Reports one card's rectangle in the strip's content space.
-///
-/// `frame(in:)` is deliberately not used here. The frame this probe publishes
-/// is computed from the card's own AppKit frame converted through the document
-/// view, which is already in the space the scroll view scrolls, so no
-/// coordinate-space guessing is involved.

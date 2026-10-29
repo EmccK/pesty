@@ -31,7 +31,22 @@ final class BarPanel: NSPanel {
         // forwarded, and the one piece of state this handler owns outside the
         // strip is whether the search field should still be open.
         let point = windowPoint(of: event)
-        guard let clipID = BarClickRouter.shared.clipID(atWindowPoint: point) else {
+        let store = ClipboardStore.shared
+        let router = BarClickRouter.shared
+        let visible = Set(store.visibleItems.map(\.id))
+        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
+        func trace(_ action: String) {
+            router.trace(
+                point: point,
+                raw: event.locationInWindow,
+                clickCount: event.clickCount,
+                flags: flags,
+                visibleIDs: visible,
+                action: action
+            )
+        }
+
+        guard let clipID = router.clipID(atWindowPoint: point, visibleIDs: visible) else {
             // Not a card. A click on the panel's dead space puts the row back
             // the way it rests: Paste's expanded field is a transient mode, so
             // clicking away from it collapses it rather than leaving a
@@ -39,34 +54,51 @@ final class BarPanel: NSPanel {
             // row are excluded because they own their own clicks - collapsing
             // under the pointer would slide the tab the user is about to hit
             // out from under the mouse before mouse-up could complete it.
-            if !BarClickRouter.shared.isOnChrome(point) {
-                AppController.shared.collapseBarSearch()
-            }
+            let onChrome = router.isOnChrome(point)
+            if !onChrome { AppController.shared.collapseBarSearch() }
+            trace(onChrome ? "miss chrome" : "miss")
             super.sendEvent(event)
             return
         }
 
-        let store = ClipboardStore.shared
         guard let item = store.visibleItems.first(where: { $0.id == clipID }) else {
+            trace("miss \(clipID.uuidString) not visible")
             super.sendEvent(event)
             return
         }
 
-        // Control-click and right-click belong to the context menu, and the
-        // drag source needs the event to begin a drag at all.
-        let flags = event.modifierFlags.intersection(.deviceIndependentFlagsMask)
-        if flags.contains(.control) || flags.contains(.shift) || flags.contains(.command) {
+        // Control-click belongs to the context menu. The drag source still
+        // needs the event, so every branch except double-click forwards it.
+        if flags.contains(.control) {
+            trace("context-menu \(clipID.uuidString)")
+            super.sendEvent(event)
+            return
+        }
+        if flags.contains(.command) {
+            store.toggleSelection(clipID)
+            trace("toggle \(clipID.uuidString) multi=\(store.multiSelectedIDs.count) selected=\(store.selectedID?.uuidString ?? "-")")
+            super.sendEvent(event)
+            return
+        }
+        if flags.contains(.shift) {
+            store.extendSelection(to: clipID)
+            trace("extend \(clipID.uuidString) multi=\(store.multiSelectedIDs.count) selected=\(store.selectedID?.uuidString ?? "-")")
             super.sendEvent(event)
             return
         }
 
         if event.clickCount >= 2 {
             store.select(clipID)
+            trace("double-click paste \(clipID.uuidString)")
             AppController.shared.pasteItem(item)
             return
         }
 
+        let before = store.selectedID
+        let multiBefore = store.multiSelectedIDs.count
         store.select(clipID)
+        let noop = before == clipID && multiBefore == 0
+        trace(noop ? "select noop \(clipID.uuidString)" : "select \(clipID.uuidString)")
 
         // The event still goes through so `ScrollView` keeps its own gesture
         // state; the selection has already landed, which is the part that was

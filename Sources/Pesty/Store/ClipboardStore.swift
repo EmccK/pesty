@@ -726,6 +726,23 @@ final class ClipboardStore {
         selectionAnchorID = selectedID
     }
 
+    /// Selects every clip the strip is showing. A single visible clip goes
+    /// through `select` so the multi-selection set stays empty.
+    func selectAllVisible() {
+        let ids = visibleItems.map(\.id)
+        guard let first = ids.first else { return }
+        if ids.count == 1 {
+            select(first)
+            return
+        }
+        let all = Set(ids)
+        if multiSelectedIDs == all { return }
+        let anchor = selectedID.flatMap { all.contains($0) ? $0 : nil } ?? first
+        multiSelectedIDs = all
+        selectedID = anchor
+        selectionAnchorID = anchor
+    }
+
     private func reconcileMultiSelection() {
         guard !multiSelectedIDs.isEmpty else { return }
         let visible = Set(visibleItems.map(\.id))
