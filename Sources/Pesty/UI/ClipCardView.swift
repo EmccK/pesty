@@ -11,7 +11,7 @@ struct ClipCardView: View {
     /// Read from the store rather than passed in by the strip: the strip's own
     /// body then stays out of the selection path, and only the card whose flag
     /// flipped invalidates.
-    private var selected: Bool { store.isSelected(item.id) }
+    private var selected: Bool { store.selectionFlag(for: item.id).isSelected }
     private var index: Int { store.visibleIndex(of: item.id) }
 
     @State private var hovering = false
@@ -300,7 +300,7 @@ struct ClipCardView: View {
         default:
             // The floating header reserves the top of the card, the metadata
             // the bottom; the text lives between them.
-            Text(item.text ?? "")
+            Text(item.cachedPreviewText)
                 .font(.system(size: 12.5))
                 .foregroundStyle(Theme.cardTextPrimary)
                 .lineLimit(10)
@@ -365,9 +365,6 @@ struct ClipCardView: View {
         // flash that made the strip look like it was stuttering while it
         // scrolled.
         preview = ClipPreviewProvider.cachedImage(for: item)
-        if preview == nil, ClipPreviewProvider.showsImage(item) {
-            preview = ClipPreviewProvider.synchronouslyLoadableImage(for: item)
-        }
         fileInfo = ClipPreviewProvider.cachedFileInfo(for: item)
         previewFailed = false
 
@@ -468,7 +465,7 @@ struct ClipCardView: View {
         case .text, .richText:
             return L("%ld characters", item.charCount)
         case .link:
-            return (item.text ?? "").replacingOccurrences(of: "https://", with: "")
+            return (item.text ?? item.textPrefix ?? "").replacingOccurrences(of: "https://", with: "")
                                     .replacingOccurrences(of: "http://", with: "")
         case .file:
             guard item.fileURLs.count == 1,
@@ -661,7 +658,7 @@ enum ClipCardMetaCache {
     private static let limit = 1_024
 
     static func value(for item: ClipItem, compute: () -> String) -> String {
-        let token = "\(item.createdAt.timeIntervalSince1970)|\(item.imageFileName ?? "")|\(item.fileURLs.joined(separator: "|"))|\(item.customTitle ?? "")|\(item.text?.count ?? -1)"
+        let token = "\(item.contentHash)|\(item.createdAt.timeIntervalSinceReferenceDate)|\(item.imageFileName ?? "")|\(item.customTitle ?? "")"
         if let entry = storage[item.id], entry.token == token { return entry.text }
         if storage.count >= limit { storage.removeAll(keepingCapacity: true) }
         let text = compute()

@@ -67,6 +67,14 @@ struct ClipUndoStack {
         deletions.contains { $0.placements.contains { $0.item.imageFileName == name } }
     }
 
+    func retainsRichFile(named name: String) -> Bool {
+        deletions.contains {
+            $0.placements.contains {
+                $0.item.rtfFileName == name || $0.item.htmlFileName == name || $0.item.textFileName == name
+            }
+        }
+    }
+
     private static func isExpired(_ deletion: ClipDeletion, at date: Date) -> Bool {
         date.timeIntervalSince(deletion.deletedAt) >= window
     }

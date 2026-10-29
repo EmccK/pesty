@@ -240,7 +240,7 @@ private final class TextClipEditorController: NSObject, NSTextViewDelegate, NSWi
 
     private func loadInitialContent() {
         if item.type == .richText,
-           let data = item.rtfData,
+           let data = ClipboardStore.shared.blobData(named: item.rtfFileName),
            let value = try? NSAttributedString(
                data: data,
                options: [.documentType: NSAttributedString.DocumentType.rtf],
@@ -248,7 +248,7 @@ private final class TextClipEditorController: NSObject, NSTextViewDelegate, NSWi
            ) {
             textView.textStorage?.setAttributedString(value)
         } else {
-            textView.string = item.text ?? ""
+            textView.string = ClipboardStore.shared.fullText(for: item) ?? ""
         }
         textView.setSelectedRange(NSRange(location: 0, length: 0))
     }

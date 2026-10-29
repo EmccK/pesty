@@ -33,7 +33,7 @@ enum PasteService {
                      to pasteboard: NSPasteboard = .general) -> Int {
         switch format {
         case .plainText:
-            if let text = item.plainText {
+            if let text = ClipboardStore.shared.fullText(for: item) {
                 pasteboard.clearContents()
                 pasteboard.setString(text, forType: .string)
                 markSource(of: item, on: pasteboard)
@@ -43,7 +43,9 @@ enum PasteService {
             if let rtf = FormatConverter.cleanedRTF(for: item) {
                 pasteboard.clearContents()
                 pasteboard.setData(rtf, forType: .rtf)
-                if let text = item.plainText { pasteboard.setString(text, forType: .string) }
+                if let text = ClipboardStore.shared.fullText(for: item) {
+                    pasteboard.setString(text, forType: .string)
+                }
                 markSource(of: item, on: pasteboard)
                 return pasteboard.changeCount
             }
@@ -104,10 +106,12 @@ enum PasteService {
                 pasteboard.setString(hex, forType: .string)
             }
         case .richText:
-            if let rtf = item.rtfData { pasteboard.setData(rtf, forType: .rtf) }
-            if let t = item.text { pasteboard.setString(t, forType: .string) }
+            if let rtf = ClipboardStore.shared.blobData(named: item.rtfFileName) {
+                pasteboard.setData(rtf, forType: .rtf)
+            }
+            if let t = ClipboardStore.shared.fullText(for: item) { pasteboard.setString(t, forType: .string) }
         case .text, .link:
-            if let t = item.text { pasteboard.setString(t, forType: .string) }
+            if let t = ClipboardStore.shared.fullText(for: item) { pasteboard.setString(t, forType: .string) }
         }
         markSource(of: item, on: pasteboard)
         return pasteboard.changeCount
