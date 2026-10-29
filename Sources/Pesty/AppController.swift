@@ -156,7 +156,7 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         editMenu.addItem(withTitle: L("Cut"), action: #selector(NSText.cut(_:)), keyEquivalent: "x")
         editMenu.addItem(withTitle: L("Copy"), action: #selector(NSText.copy(_:)), keyEquivalent: "c")
         editMenu.addItem(withTitle: L("Paste"), action: #selector(NSText.paste(_:)), keyEquivalent: "v")
-        editMenu.addItem(withTitle: L("Select All"), action: #selector(NSText.selectAll(_:)), keyEquivalent: "a")
+        editMenu.addItem(withTitle: L("Select All"), action: #selector(menuSelectAll(_:)), keyEquivalent: "a").target = self
         editMenu.addItem(.separator())
         let find = editMenu.addItem(withTitle: L("Find…"),
                                     action: #selector(NSTextView.performTextFinderAction(_:)),
@@ -633,6 +633,19 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         win.makeKeyAndOrderFront(nil)
     }
 
+    /// Edit ▸ Select All. A text view keeps the keystroke; otherwise, while the
+    /// bar is key, it selects every visible clip.
+    @objc func menuSelectAll(_ sender: Any?) {
+        if let text = NSApp.keyWindow?.firstResponder as? NSText {
+            text.selectAll(sender)
+            return
+        }
+        guard barController?.window?.isKeyWindow == true,
+              barController?.searchOwnsFirstResponder != true else { return }
+        store.selectAllVisible()
+        BarClickRouter.log("select-all visible=\(store.visibleItems.count) multi=\(store.multiSelectedIDs.count)")
+    }
+
     /// Handles commands that only apply while the Paste Bar owns keyboard focus.
     /// The panel's key-equivalent path calls this before SwiftUI receives command keys.
     func handleBarCommandShortcut(_ event: NSEvent) -> Bool {
@@ -763,6 +776,12 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         case kVK_ForwardDelete:
             deleteEffectiveSelection(permanently: opt)
             return nil
+        case kVK_ANSI_A:
+            if cmd, !ctrl, !opt, !flags.contains(.shift) {
+                store.selectAllVisible()
+                BarClickRouter.log("select-all visible=\(store.visibleItems.count) multi=\(store.multiSelectedIDs.count)")
+                return nil
+            }
         case kVK_ANSI_Z:
             if cmd, !ctrl, !opt, !flags.contains(.shift), store.undoLastDelete() { return nil }
         case kVK_ANSI_C:
