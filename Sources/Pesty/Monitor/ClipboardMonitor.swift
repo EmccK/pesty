@@ -1,5 +1,7 @@
 import AppKit
 import CryptoKit
+import ImageIO
+import UniformTypeIdentifiers
 
 @MainActor
 final class ClipboardMonitor {
@@ -11,6 +13,17 @@ final class ClipboardMonitor {
 
     var suppressUntilChangeCount: Int = -1
     private(set) var isPaused = false
+    private let captureQueue = DispatchQueue(label: "pesty.capture", qos: .userInitiated)
+
+    private enum Pending: @unchecked Sendable {
+        case ready(ClipItem, rtf: Data?, html: Data?)
+        case image(png: Data?, tiff: Data?, bundleID: String?, appName: String?)
+    }
+
+    private struct Made {
+        var item: ClipItem
+        var preview: NSImage?
+    }
 
     init() {
         lastChangeCount = pasteboard.changeCount
@@ -35,11 +48,21 @@ final class ClipboardMonitor {
         lastChangeCount = current
         guard !isPaused else { return }
         if current == suppressUntilChangeCount { return }
-        guard let item = makeItem() else { return }
-        ClipboardStore.shared.addCaptured(item)
+        guard let pending = takePending() else { return }
+        let images = ClipboardStore.shared.imagesDirectory
+        let blobs = ClipboardStore.shared.blobsDirectory
+        captureQueue.async {
+            guard let made = Self.materialize(pending, images: images, blobs: blobs) else { return }
+            DispatchQueue.main.async {
+                if let preview = made.preview {
+                    ClipPreviewProvider.storePreview(preview, for: made.item)
+                }
+                ClipboardStore.shared.addCaptured(made.item)
+            }
+        }
     }
 
-    private func makeItem() -> ClipItem? {
+    private func takePending() -> Pending? {
         let types = pasteboard.types ?? []
 
         if types.contains(NSPasteboard.PasteboardType("org.nspasteboard.ConcealedType")) { return nil }
@@ -77,6 +100,7 @@ final class ClipboardMonitor {
         func decorate(_ item: inout ClipItem) {
             item.sourceBundleID = bundleID
             item.sourceAppName = appName
+            item.refreshDerivedState()
         }
 
         if let urls = pasteboard.readObjects(forClasses: [NSURL.self],
@@ -86,16 +110,14 @@ final class ClipboardMonitor {
                                 text: urls.map(\.lastPathComponent).joined(separator: ", "),
                                 fileURLs: urls.map(\.absoluteString))
             decorate(&item)
-            return item
+            return .ready(item, rtf: nil, html: nil)
         }
 
         if types.contains(.png) || types.contains(.tiff) {
-            if let data = pngData() {
-                let hash = Self.sha256Hex(data)
-                guard let name = ClipboardStore.shared.storeImageData(data) else { return nil }
-                var item = ClipItem(type: .image, imageFileName: name, imageHash: hash)
-                decorate(&item)
-                return item
+            let png = pasteboard.data(forType: .png)
+            let tiff = png == nil ? pasteboard.data(forType: .tiff) : nil
+            if png != nil || tiff != nil {
+                return .image(png: png, tiff: tiff, bundleID: bundleID, appName: appName)
             }
         }
 
@@ -118,33 +140,63 @@ final class ClipboardMonitor {
             } else {
                 type = .text
             }
-            var item = ClipItem(type: type, text: string, rtfData: rtf, htmlData: html)
+            var item = ClipItem(type: type, text: string)
             decorate(&item)
-            return item
+            return .ready(item, rtf: rtf, html: html)
         }
 
         if hasColorType(types), let color = NSColor(from: pasteboard) {
             var item = ClipItem(type: .color, colorHex: color.usingColorSpace(.sRGB)?.hexString)
             decorate(&item)
-            return item
+            return .ready(item, rtf: nil, html: nil)
         }
 
         return nil
+    }
+
+    nonisolated private static func materialize(_ pending: Pending, images: URL, blobs: URL) -> Made? {
+        switch pending {
+        case .ready(var item, let rtf, let html):
+            if item.type == .text || item.type == .richText || item.type == .link,
+               let text = item.text, !text.isEmpty,
+               let name = ClipboardStore.writeBlob(Data(text.utf8), ext: "txt", to: blobs) {
+                item.textFileName = name
+                item.text = nil
+            }
+            if let rtf { item.rtfFileName = ClipboardStore.writeBlob(rtf, ext: "rtf", to: blobs) }
+            if let html { item.htmlFileName = ClipboardStore.writeBlob(html, ext: "html", to: blobs) }
+            return Made(item: item, preview: nil)
+        case .image(let png, let tiff, let bundleID, let appName):
+            guard let data = pngData(png: png, tiff: tiff),
+                  let name = ClipboardStore.writeImage(data, to: images) else { return nil }
+            let hash = sha256Hex(data)
+            var item = ClipItem(type: .image, imageFileName: name, imageHash: hash)
+            item.sourceBundleID = bundleID
+            item.sourceAppName = appName
+            item.refreshDerivedState()
+            let preview = ClipPreviewProvider.decodeThumbnail(at: images.appendingPathComponent(name))
+            return Made(item: item, preview: preview)
+        }
+    }
+
+    nonisolated private static func pngData(png: Data?, tiff: Data?) -> Data? {
+        if let png { return png }
+        guard let tiff,
+              let source = CGImageSourceCreateWithData(tiff as CFData, nil),
+              let image = CGImageSourceCreateImageAtIndex(source, 0, nil) else { return nil }
+        let out = NSMutableData()
+        guard let dest = CGImageDestinationCreateWithData(out, UTType.png.identifier as CFString, 1, nil) else { return nil }
+        CGImageDestinationAddImage(dest, image, nil)
+        guard CGImageDestinationFinalize(dest) else { return nil }
+        return out as Data
     }
 
     private func hasColorType(_ types: [NSPasteboard.PasteboardType]) -> Bool {
         types.contains { $0.rawValue.localizedCaseInsensitiveContains("color") }
     }
 
-    private static func sha256Hex(_ data: Data) -> String {
+    nonisolated private static func sha256Hex(_ data: Data) -> String {
         SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined()
-    }
-
-    private func pngData() -> Data? {
-        if let data = pasteboard.data(forType: .png) { return data }
-        guard let tiff = pasteboard.data(forType: .tiff),
-              let rep = NSBitmapImageRep(data: tiff) else { return nil }
-        return rep.representation(using: .png, properties: [:])
     }
 
     private static func validatedSourceBundleID(_ raw: String?) -> String? {

@@ -19,6 +19,13 @@ enum BarInputMode: Equatable {
     case search
 }
 
+/// One object per clip so a selection change notifies the two cards whose
+/// flag flipped. A shared `selectedID` would invalidate every card that read it.
+@Observable
+final class SelectionFlag {
+    var isSelected = false
+}
+
 @Observable
 @MainActor
 final class ClipboardStore {
@@ -35,7 +42,10 @@ final class ClipboardStore {
     /// Ordered newest-copied first, which is the history order. A pinboard's
     /// order comes from `pinnedAt`, so one array serves both views.
     private(set) var items: [ClipItem] = [] {
-        didSet { invalidateVisibleItems() }
+        didSet {
+            invalidateVisibleItems()
+            indexIsStale = true
+        }
     }
 
     /// Boards carry no clips of their own any more: membership lives on the
@@ -60,8 +70,12 @@ final class ClipboardStore {
             if searchText != oldValue { clearMultiSelection(); invalidateVisibleItems() }
         }
     }
-    var selectedID: UUID?
-    private(set) var multiSelectedIDs: Set<UUID> = []
+    var selectedID: UUID? {
+        didSet { if selectedID != oldValue { refreshSelectionFlags() } }
+    }
+    private(set) var multiSelectedIDs: Set<UUID> = [] {
+        didSet { if multiSelectedIDs != oldValue { refreshSelectionFlags() } }
+    }
     private var selectionAnchorID: UUID?
 
     /// Set while the user is arrowing through the strip. Keyboard moves arrive
@@ -84,6 +98,7 @@ final class ClipboardStore {
 
     private var storeURL: URL
     private var imagesDir: URL
+    private var blobsDir: URL
     private var baseDir: URL
     private var saveWorkItem: DispatchWorkItem?
 
@@ -117,6 +132,7 @@ final class ClipboardStore {
         let base = (Settings.shared.iCloudSync ? ClipboardStore.iCloudBase : nil) ?? ClipboardStore.localBase
         baseDir = base
         imagesDir = base.appendingPathComponent("images", isDirectory: true)
+        blobsDir = base.appendingPathComponent("blobs", isDirectory: true)
         storeURL = base.appendingPathComponent("store.json")
         prepareDirectories()
         load()
@@ -126,6 +142,8 @@ final class ClipboardStore {
     private func prepareDirectories() {
         let fm = FileManager.default
         try? fm.createDirectory(at: imagesDir, withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o700])
+        try? fm.createDirectory(at: blobsDir, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
         try? fm.setAttributes([.posixPermissions: 0o700], ofItemAtPath: baseDir.path)
     }
@@ -172,6 +190,14 @@ final class ClipboardStore {
     /// Position of each clip in `cachedVisibleItems`, so a card's ⌘-number
     /// hint costs a dictionary lookup instead of a linear scan.
     private var cachedVisibleIndex: [UUID: Int] = [:]
+    private var cachedVisibleIDs: [UUID] = []
+    private var indexByID: [UUID: Int] = [:]
+    private var indexByContent: [UInt64: Int] = [:]
+    private var indexIsStale = true
+    private var selectionFlags: [UUID: SelectionFlag] = [:]
+    private var saveGeneration = 0
+    private let saveLock = NSLock()
+    private let saveQueue = DispatchQueue(label: "pesty.save", qos: .utility)
 
     private func invalidateVisibleItems() {
         cachedVisibleItems = nil
@@ -195,14 +221,27 @@ final class ClipboardStore {
         let result = q.isEmpty ? base : base.filter { $0.searchTextLowercased.contains(q) }
         cachedVisibleItems = result
         var index = [UUID: Int](minimumCapacity: result.count)
-        for (position, clip) in result.enumerated() { index[clip.id] = position }
+        var ids: [UUID] = []
+        ids.reserveCapacity(result.count)
+        for (position, clip) in result.enumerated() {
+            index[clip.id] = position
+            ids.append(clip.id)
+        }
         cachedVisibleIndex = index
+        cachedVisibleIDs = ids
         return result
+    }
+
+    var visibleIDs: [UUID] {
+        if cachedVisibleItems == nil { _ = visibleItems }
+        return cachedVisibleIDs
     }
 
     var selectedItem: ClipItem? {
         guard let id = selectedID else { return nil }
-        return visibleItems.first(where: { $0.id == id })
+        let items = visibleItems
+        guard let idx = cachedVisibleIndex[id] else { return nil }
+        return items[idx]
     }
 
     // MARK: - Capture
@@ -214,8 +253,8 @@ final class ClipboardStore {
         // that gets bumped to the front keeps its `list`.
         incoming.list = nil
         incoming.pinnedAt = nil
-        if let idx = items.firstIndex(where: { $0.sameContent(as: incoming) }) {
-            if incoming.imageFileName != items[idx].imageFileName { deleteImageFile(incoming) }
+        if let idx = duplicateIndex(of: incoming) {
+            releaseFiles(incoming)
             var existing = items.remove(at: idx)
             existing.createdAt = incoming.createdAt
             existing.refreshDerivedState()
@@ -228,6 +267,7 @@ final class ClipboardStore {
             return
         }
         items.insert(incoming, at: 0)
+        spill(&items[0])
         trimHistory()
         if source == .history && searchText.isEmpty && multiSelectedIDs.isEmpty {
             selectedID = incoming.id
@@ -244,7 +284,7 @@ final class ClipboardStore {
     /// There is one record per clip, so promoting only re-stamps its copy time
     /// and moves it to the front of history. A pinned clip keeps its board.
     func promoteCopiedItem(_ item: ClipItem, at date: Date = .now) {
-        guard let idx = items.firstIndex(where: { $0.id == item.id }) else {
+        guard let idx = itemIndex(of: item.id) else {
             var copy = item
             copy.createdAt = date
             addCaptured(copy)
@@ -259,7 +299,11 @@ final class ClipboardStore {
 
     // MARK: - Retention
 
-    func applyRetentionPolicy() { trimHistory(); scheduleSave() }
+    func applyRetentionPolicy() {
+        let before = items.count
+        trimHistory()
+        if items.count != before { scheduleSave() }
+    }
 
     func retentionRemovalCount(mode: HistoryRetentionMode, limit: Int, days: Int) -> Int {
         let pruneable = items.filter { !$0.isPinned }
@@ -318,7 +362,7 @@ final class ClipboardStore {
         guard !removed.isEmpty else { return }
         let ids = Set(removed.map(\.id))
         items.removeAll { ids.contains($0.id) }
-        for item in removed { deleteImageFile(item) }
+        for item in removed { releaseFiles(item) }
         markRetentionPruned(removed)
         if let sel = selectedID, ids.contains(sel) { selectFirst() }
         reconcileMultiSelection()
@@ -360,7 +404,7 @@ final class ClipboardStore {
         // The record is gone, so its image can go too - unless the undo stack
         // is still holding it for a restore.
         if permanently || Settings.shared.deletePermanently {
-            for placement in placements { deleteImageFile(placement.item) }
+            for placement in placements { releaseFiles(placement.item) }
         }
         // Permanent deletes are not undoable.
         if !permanently && !Settings.shared.deletePermanently {
@@ -394,7 +438,7 @@ final class ClipboardStore {
         items.removeAll { ids.contains($0.id) }
         selectedID = nil
         forgetDeletions()
-        for item in cleared { deleteImageFile(item) }
+        for item in cleared { releaseFiles(item) }
         reconcileMultiSelection()
         scheduleSave()
     }
@@ -445,14 +489,14 @@ final class ClipboardStore {
             break
         case .pinboard(let boardID):
             guard pinboards.contains(where: { $0.id == boardID }) else {
-                deleteImageFile(item)
+                releaseFiles(item)
                 return false
             }
             item.list = boardID
         }
-        let already = items.contains { $0.id == item.id || $0.sameContent(as: item) }
+        let already = itemIndex(of: item.id) != nil || duplicateIndex(of: item) != nil
         if already {
-            deleteImageFile(item)
+            releaseFiles(item)
             return false
         }
         items.insert(item, at: Self.historyInsertionIndex(for: item, in: items))
@@ -470,7 +514,7 @@ final class ClipboardStore {
     private func refreshUndoState() {
         let now = Date()
         for deletion in undoStack.removeExpired(at: now) {
-            for placement in deletion.placements { deleteImageFile(placement.item) }
+            for placement in deletion.placements { releaseFiles(placement.item) }
         }
         hasUndoableDeletion = !undoStack.isEmpty
         undoExpirationWorkItem?.cancel()
@@ -488,7 +532,7 @@ final class ClipboardStore {
     /// image files it kept would otherwise be orphaned.
     func forgetDeletions() {
         for deletion in undoStack.removeAll() {
-            for placement in deletion.placements { deleteImageFile(placement.item) }
+            for placement in deletion.placements { releaseFiles(placement.item) }
         }
         refreshUndoState()
     }
@@ -541,7 +585,7 @@ final class ClipboardStore {
     /// at a time - the same cardinality Paste's `ItemEntity.list` has.
     func saveToPinboard(_ item: ClipItem, boardID: UUID) {
         guard pinboards.contains(where: { $0.id == boardID }) else { return }
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard let index = itemIndex(of: item.id) else { return }
         guard items[index].list != boardID else { return }
         items[index].list = boardID
         items[index].pinnedAt = Date()
@@ -550,7 +594,7 @@ final class ClipboardStore {
 
     /// Takes the clip off its board. It stays in history.
     func removeFromPinboard(_ item: ClipItem) {
-        guard let index = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard let index = itemIndex(of: item.id) else { return }
         guard items[index].list != nil else { return }
         items[index].list = nil
         items[index].pinnedAt = nil
@@ -558,7 +602,39 @@ final class ClipboardStore {
     }
 
     func item(withID id: UUID) -> ClipItem? {
-        items.first(where: { $0.id == id })
+        guard let index = itemIndex(of: id) else { return nil }
+        return items[index]
+    }
+
+    private func itemIndex(of id: UUID) -> Int? {
+        reindexIfNeeded()
+        return indexByID[id]
+    }
+
+    /// Hash hit confirms with `sameContent`. A miss is new content: no scan.
+    /// ponytail: a 64-bit FNV collision scans. Irrelevant at clipboard scale.
+    private func duplicateIndex(of item: ClipItem) -> Int? {
+        reindexIfNeeded()
+        guard let idx = indexByContent[item.contentHash] else { return nil }
+        if items.indices.contains(idx), items[idx].sameContent(as: item) { return idx }
+        return items.firstIndex { $0.sameContent(as: item) }
+    }
+
+    private func reindexIfNeeded() {
+        guard indexIsStale else { return }
+        indexIsStale = false
+        var byID = [UUID: Int](minimumCapacity: items.count)
+        var byContent = [UInt64: Int](minimumCapacity: items.count)
+        for (offset, item) in items.enumerated() {
+            byID[item.id] = offset
+            byContent[item.contentHash] = offset
+        }
+        indexByID = byID
+        indexByContent = byContent
+        if selectionFlags.count > items.count + 128 {
+            let live = Set(items.map(\.id))
+            selectionFlags = selectionFlags.filter { live.contains($0.key) }
+        }
     }
 
     // MARK: - Content edits
@@ -568,34 +644,61 @@ final class ClipboardStore {
         guard [.text, .richText, .link].contains(item.type),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
         let type: ClipType = richTextData != nil ? .richText : (isWebLink(text) ? .link : .text)
-        return updateContent(of: item) { existing in
+        let newRTF = richTextData.flatMap { storeBlob($0, ext: "rtf") }
+        let previousRTF = item.rtfFileName
+        let previousHTML = item.htmlFileName
+        let previousText = item.textFileName
+        if richTextData == nil, item.htmlFileName == nil, item.type == type, fullText(for: item) == text {
+            return false
+        }
+        let ok = updateContent(of: item) { existing in
             var updated = existing
             updated.type = type
             updated.text = text
-            updated.rtfData = richTextData
-            updated.htmlData = nil
+            updated.textFileName = nil
+            updated.rtfFileName = newRTF
+            updated.htmlFileName = nil
             updated.colorHex = nil
             return updated
         }
+        if ok {
+            spill(&items[0])
+            if previousText != items[0].textFileName { deleteBlobIfUnused(previousText) }
+            if previousRTF != newRTF { deleteBlobIfUnused(previousRTF) }
+            deleteBlobIfUnused(previousHTML)
+        } else if newRTF != previousRTF {
+            deleteBlobIfUnused(newRTF)
+        }
+        return ok
     }
 
     @discardableResult
     func updateColorContent(_ hex: String, for item: ClipItem) -> Bool {
         guard item.type == .color, let color = NSColor(hex: hex) else { return false }
         let normalized = color.hexString
-        return updateContent(of: item) { existing in
+        let previousRTF = item.rtfFileName
+        let previousHTML = item.htmlFileName
+        let previousText = item.textFileName
+        let ok = updateContent(of: item) { existing in
             var updated = existing
             updated.type = .color
             updated.text = nil
-            updated.rtfData = nil
-            updated.htmlData = nil
+            updated.textFileName = nil
+            updated.rtfFileName = nil
+            updated.htmlFileName = nil
             updated.colorHex = normalized
             return updated
         }
+        if ok {
+            deleteBlobIfUnused(previousRTF)
+            deleteBlobIfUnused(previousHTML)
+            deleteBlobIfUnused(previousText)
+        }
+        return ok
     }
 
     private func updateContent(of item: ClipItem, transform: (ClipItem) -> ClipItem) -> Bool {
-        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return false }
+        guard let i = itemIndex(of: item.id) else { return false }
         var updated = transform(items[i])
         guard updated != items[i] else { return false }
         updated.createdAt = Date()
@@ -622,12 +725,13 @@ final class ClipboardStore {
     /// clip until it matches another one has to leave one record behind, the
     /// same way capturing a duplicate does.
     private func removeContentDuplicates(of item: ClipItem) {
-        let key = contentKey(item)
-        let duplicates = items.filter { $0.id != item.id && contentKey($0) == key }
+        let duplicates = items.filter {
+            $0.id != item.id && $0.contentHash == item.contentHash && $0.sameContent(as: item)
+        }
         guard !duplicates.isEmpty else { return }
         let ids = Set(duplicates.map(\.id))
         items.removeAll { ids.contains($0.id) }
-        for duplicate in duplicates { deleteImageFile(duplicate) }
+        for duplicate in duplicates { releaseFiles(duplicate) }
     }
 
     private func isWebLink(_ text: String) -> Bool {
@@ -641,7 +745,7 @@ final class ClipboardStore {
     }
 
     func setTitle(_ title: String, for item: ClipItem) {
-        guard let i = items.firstIndex(where: { $0.id == item.id }) else { return }
+        guard let i = itemIndex(of: item.id) else { return }
         items[i].customTitle = title
         items[i].refreshDerivedState()
         scheduleSave()
@@ -649,7 +753,45 @@ final class ClipboardStore {
 
     // MARK: - Selection
 
-    func selectFirst() { selectedID = visibleItems.first?.id }
+    func selectFirst() {
+        let first = visibleItems.first?.id
+        guard selectedID != first else { return }
+        selectedID = first
+    }
+
+    func selectionFlag(for id: UUID) -> SelectionFlag {
+        if let flag = selectionFlags[id] { return flag }
+        let flag = SelectionFlag()
+        flag.isSelected = isSelected(id)
+        var flags = selectionFlags
+        flags[id] = flag
+        selectionFlags = flags
+        return flag
+    }
+
+    private func refreshSelectionFlags() {
+        let onIDs: Set<UUID> = multiSelectedIDs.isEmpty
+            ? Set(selectedID.map { [$0] } ?? [])
+            : multiSelectedIDs
+        if cachedVisibleItems != nil, !cachedVisibleIDs.isEmpty {
+            let center = selectedID.flatMap { cachedVisibleIndex[$0] } ?? 0
+            let lower = max(0, center - 8)
+            let upper = min(cachedVisibleIDs.count, center + 32)
+            var flags = selectionFlags
+            var grew = false
+            for id in cachedVisibleIDs[lower..<upper] where flags[id] == nil {
+                let flag = SelectionFlag()
+                flag.isSelected = onIDs.contains(id)
+                flags[id] = flag
+                grew = true
+            }
+            if grew { selectionFlags = flags }
+        }
+        for (id, flag) in selectionFlags {
+            let on = onIDs.contains(id)
+            if flag.isSelected != on { flag.isSelected = on }
+        }
+    }
 
     var effectiveSelectionIDs: Set<UUID> {
         if !multiSelectedIDs.isEmpty { return multiSelectedIDs }
@@ -680,15 +822,16 @@ final class ClipboardStore {
         let alreadyOnlySelection = selectedID == id
             && multiSelectedIDs.isEmpty
             && selectionAnchorID == id
-        isFastSelectionRun = false
+        if isFastSelectionRun { isFastSelectionRun = false }
         guard !alreadyOnlySelection else { return }
         selectedID = id
         selectionAnchorID = id
-        multiSelectedIDs = []
+        if !multiSelectedIDs.isEmpty { multiSelectedIDs = [] }
     }
 
     func toggleSelection(_ id: UUID) {
-        guard visibleItems.contains(where: { $0.id == id }) else { return }
+        _ = visibleItems
+        guard cachedVisibleIndex[id] != nil else { return }
         if multiSelectedIDs.isEmpty, let sel = selectedID, sel != id,
            visibleItems.contains(where: { $0.id == sel }) {
             multiSelectedIDs = [sel]
@@ -708,9 +851,9 @@ final class ClipboardStore {
 
     func extendSelection(to id: UUID) {
         let items = visibleItems
-        guard let targetIndex = items.firstIndex(where: { $0.id == id }) else { return }
+        guard let targetIndex = cachedVisibleIndex[id] else { return }
         guard let anchor = selectionAnchorID ?? selectedID,
-              let anchorIndex = items.firstIndex(where: { $0.id == anchor }) else {
+              let anchorIndex = cachedVisibleIndex[anchor] else {
             select(id)
             return
         }
@@ -722,6 +865,7 @@ final class ClipboardStore {
     }
 
     func clearMultiSelection() {
+        guard !multiSelectedIDs.isEmpty || selectionAnchorID != selectedID else { return }
         multiSelectedIDs = []
         selectionAnchorID = selectedID
     }
@@ -729,7 +873,7 @@ final class ClipboardStore {
     /// Selects every clip the strip is showing. A single visible clip goes
     /// through `select` so the multi-selection set stays empty.
     func selectAllVisible() {
-        let ids = visibleItems.map(\.id)
+        let ids = visibleIDs
         guard let first = ids.first else { return }
         if ids.count == 1 {
             select(first)
@@ -761,16 +905,31 @@ final class ClipboardStore {
         clearMultiSelection()
         barPresentationToken &+= 1
         selectFirst()
+        refreshSelectionFlags()
+        warmPreviews()
+    }
+
+    private func warmPreviews() {
+        var pending: [ClipItem] = []
+        for item in visibleItems where ClipPreviewProvider.showsImage(item) {
+            pending.append(item)
+            if pending.count == 16 { break }
+        }
+        ClipPreviewProvider.warm(pending)
     }
 
     func moveSelection(by delta: Int) {
-        clearMultiSelection()
+        if !multiSelectedIDs.isEmpty { multiSelectedIDs = [] }
         let items = visibleItems
         guard !items.isEmpty else { return }
-        guard let id = selectedID, let idx = items.firstIndex(where: { $0.id == id }) else {
-            selectedID = items.first?.id; return
+        guard let id = selectedID, let idx = cachedVisibleIndex[id] else {
+            let first = items[0].id
+            if selectedID != first { selectedID = first }
+            if selectionAnchorID != selectedID { selectionAnchorID = selectedID }
+            return
         }
         let next = max(0, min(items.count - 1, idx + delta))
+        guard next != idx else { return }
         selectedID = items[next].id
         selectionAnchorID = selectedID
         beginFastSelectionRun()
@@ -780,7 +939,7 @@ final class ClipboardStore {
     /// animate, so a held arrow key produces one visible move instead of a
     /// pile of half-finished ones.
     private func beginFastSelectionRun() {
-        isFastSelectionRun = true
+        if !isFastSelectionRun { isFastSelectionRun = true }
         fastSelectionReset?.cancel()
         let reset = DispatchWorkItem { [weak self] in
             self?.isFastSelectionRun = false
@@ -790,6 +949,12 @@ final class ClipboardStore {
     }
 
     // MARK: - Images
+
+    var imagesDirectory: URL { imagesDir }
+
+    nonisolated static func writeImage(_ data: Data, to directory: URL) -> String? {
+        writeBlob(data, ext: "png", to: directory)
+    }
 
     func imageURL(for item: ClipItem) -> URL? {
         guard let name = item.imageFileName else { return nil }
@@ -802,13 +967,13 @@ final class ClipboardStore {
     }
 
     func storeImageData(_ data: Data) -> String? {
-        let name = "\(UUID().uuidString).png"
-        let url = imagesDir.appendingPathComponent(name)
-        do {
-            try data.write(to: url, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
-            return name
-        } catch { return nil }
+        Self.writeImage(data, to: imagesDir)
+    }
+
+    private func releaseFiles(_ item: ClipItem) {
+        deleteImageFile(item)
+        deleteBlobIfUnused(item.rtfFileName)
+        deleteBlobIfUnused(item.htmlFileName)
     }
 
     private func deleteImageFile(_ item: ClipItem) {
@@ -817,6 +982,92 @@ final class ClipboardStore {
             || undoStack.retainsImageFile(named: name)
         if stillUsed { return }
         if let url = imageURL(for: item) { try? FileManager.default.removeItem(at: url) }
+    }
+
+    var blobsDirectory: URL { blobsDir }
+
+    func fullText(for item: ClipItem) -> String? {
+        switch item.type {
+        case .image:
+            return nil
+        case .color:
+            return item.colorHex
+        case .file:
+            return item.plainText
+        case .text, .richText, .link:
+            if item.textFileName == nil, let text = item.text { return text }
+            if let name = item.textFileName,
+               let data = blobData(named: name),
+               let string = String(data: data, encoding: .utf8) {
+                return string
+            }
+            return item.text ?? item.textPrefix
+        }
+    }
+
+    func blobData(named name: String?) -> Data? {
+        guard let name else { return nil }
+        return try? Data(contentsOf: blobsDir.appendingPathComponent(name), options: .mappedIfSafe)
+    }
+
+    func blobByteCount(named name: String?) -> Int? {
+        guard let name else { return nil }
+        let values = try? blobsDir.appendingPathComponent(name)
+            .resourceValues(forKeys: [.fileSizeKey])
+        return values?.fileSize
+    }
+
+    func storeBlob(_ data: Data, ext: String) -> String? {
+        Self.writeBlob(data, ext: ext, to: blobsDir)
+    }
+
+    nonisolated static func writeBlob(_ data: Data, ext: String, to directory: URL) -> String? {
+        let name = "\(UUID().uuidString).\(ext)"
+        let url = directory.appendingPathComponent(name)
+        do {
+            try data.write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            return name
+        } catch { return nil }
+    }
+
+    private func deleteBlobIfUnused(_ name: String?) {
+        guard let name else { return }
+        let stillUsed = items.contains {
+            $0.rtfFileName == name || $0.htmlFileName == name || $0.textFileName == name
+        }
+            || undoStack.retainsRichFile(named: name)
+        if stillUsed { return }
+        try? FileManager.default.removeItem(at: blobsDir.appendingPathComponent(name))
+    }
+
+    private func spill(_ item: inout ClipItem) {
+        if let data = item.pendingRTF {
+            item.rtfFileName = storeBlob(data, ext: "rtf") ?? item.rtfFileName
+            item.pendingRTF = nil
+        }
+        if let data = item.pendingHTML {
+            item.htmlFileName = storeBlob(data, ext: "html") ?? item.htmlFileName
+            item.pendingHTML = nil
+        }
+        let spillsText = item.textFileName == nil && item.text?.isEmpty == false
+            && (item.type == .text || item.type == .richText || item.type == .link)
+        if spillsText, let text = item.text, let name = storeBlob(Data(text.utf8), ext: "txt") {
+            item.textFileName = name
+            item.text = nil
+        }
+    }
+
+    private func spillPendingRichText() -> Bool {
+        var spilled = false
+        for index in items.indices where items[index].pendingRTF != nil
+            || items[index].pendingHTML != nil
+            || (items[index].textFileName == nil && items[index].text?.isEmpty == false
+                && (items[index].type == .text || items[index].type == .richText || items[index].type == .link)) {
+            spill(&items[index])
+            spilled = true
+        }
+        return spilled
     }
 
     // MARK: - Persistence
@@ -849,6 +1100,7 @@ final class ClipboardStore {
         // Decoded clips carry empty derived fields: they are neither stored nor
         // compared, so the whole library has to be rebuilt once on load.
         refreshAllDerivedState()
+        if spillPendingRichText() { saveNow() }
         selectFirst()
     }
 
@@ -867,12 +1119,33 @@ final class ClipboardStore {
     }
 
     func saveNow() {
-        let snap = Snapshot(items: items, pinboards: pinboards)
-        guard let data = try? JSONEncoder().encode(snap) else { return }
-        ignoreWatchUntil = Date().addingTimeInterval(1.5)
-        try? data.write(to: storeURL, options: .atomic)
-        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: storeURL.path)
-        NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil)
+        saveWorkItem?.cancel()
+        saveWorkItem = nil
+        saveLock.lock()
+        saveGeneration += 1
+        let generation = saveGeneration
+        saveLock.unlock()
+        let snapshot = Snapshot(items: items, pinboards: pinboards)
+        let url = storeURL
+        saveQueue.async {
+            guard let data = try? JSONEncoder().encode(snapshot) else { return }
+            self.saveLock.lock()
+            let current = self.saveGeneration
+            self.saveLock.unlock()
+            guard current == generation else { return }
+            DispatchQueue.main.sync {
+                self.ignoreWatchUntil = Date().addingTimeInterval(1.5)
+            }
+            try? data.write(to: url, options: .atomic)
+            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            DispatchQueue.main.async {
+                self.saveLock.lock()
+                let stillCurrent = self.saveGeneration == generation
+                self.saveLock.unlock()
+                guard stillCurrent else { return }
+                NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil)
+            }
+        }
     }
 
     // MARK: - Remote (CloudKit) apply
@@ -908,6 +1181,7 @@ final class ClipboardStore {
             applyRemoteClip(item)
         }
         trimHistory()
+        spillPendingRichText()
         if selectedID == nil { selectFirst() }
         reconcileMultiSelection()
         scheduleSave()
@@ -926,7 +1200,7 @@ final class ClipboardStore {
             items[index].list = nil
             items[index].pinnedAt = nil
         }
-        for item in removed { deleteImageFile(item) }
+        for item in removed { releaseFiles(item) }
         if let sel = selectedID, set.contains(sel) { selectFirst() }
         reconcileMultiSelection()
         scheduleSave()
@@ -949,47 +1223,52 @@ final class ClipboardStore {
     private func applyRemoteClip(_ item: ClipItem) {
         let replaced = items.filter { $0.id == item.id }
         items.removeAll { $0.id == item.id }
-        let key = contentKey(item)
         // Content is unique across the whole table, not per container, so a
         // remote copy of something already held has to collapse into one
         // record - whichever copy is newer wins.
-        if let dupIdx = items.firstIndex(where: { contentKey($0) == key }) {
+        if let dupIdx = duplicateIndex(of: item) {
             let dup = items[dupIdx]
             if dup.createdAt >= item.createdAt {
-                deleteImageFile(item)
-                for old in replaced { deleteImageFile(old) }
+                releaseFiles(item)
+                for old in replaced { releaseFiles(old) }
                 return
             }
             items.remove(at: dupIdx)
-            deleteImageFile(dup)
+            releaseFiles(dup)
         }
         // Decoded from a sync record: no derived fields travelled with it.
         var incoming = item
         incoming.refreshDerivedState()
+        spill(&incoming)
         items.insert(incoming, at: Self.historyInsertionIndex(for: incoming, in: items))
         retentionPrunedRecordNames.remove(item.id.uuidString)
         // Same-id replace: drop the old image file unless something still uses it.
-        for old in replaced { deleteImageFile(old) }
+        for old in replaced { releaseFiles(old) }
     }
 
     func setICloudSync(_ enabled: Bool) {
         stopWatching()
         let target = (enabled ? ClipboardStore.iCloudBase : ClipboardStore.localBase) ?? ClipboardStore.localBase
         let newImages = target.appendingPathComponent("images", isDirectory: true)
+        let newBlobs = target.appendingPathComponent("blobs", isDirectory: true)
         let newStore = target.appendingPathComponent("store.json")
         let fm = FileManager.default
         try? fm.createDirectory(at: newImages, withIntermediateDirectories: true,
+                                attributes: [.posixPermissions: 0o700])
+        try? fm.createDirectory(at: newBlobs, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
 
         if fm.fileExists(atPath: newStore.path),
            let data = try? Data(contentsOf: newStore),
            let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
             copyImages(from: imagesDir, to: newImages)
-            baseDir = target; imagesDir = newImages; storeURL = newStore
+            copyBlobs(from: blobsDir, to: newBlobs)
+            baseDir = target; imagesDir = newImages; blobsDir = newBlobs; storeURL = newStore
             mergeExternal(snap)
         } else {
             copyImages(from: imagesDir, to: newImages)
-            baseDir = target; imagesDir = newImages; storeURL = newStore
+            copyBlobs(from: blobsDir, to: newBlobs)
+            baseDir = target; imagesDir = newImages; blobsDir = newBlobs; storeURL = newStore
             saveNow()
         }
         prepareDirectories()
@@ -1005,12 +1284,21 @@ final class ClipboardStore {
         }
     }
 
+    private func copyBlobs(from src: URL, to dst: URL) {
+        let fm = FileManager.default
+        guard let files = try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil) else { return }
+        for file in files where file.pathExtension == "rtf" || file.pathExtension == "html" || file.pathExtension == "txt" {
+            let target = dst.appendingPathComponent(file.lastPathComponent)
+            if !fm.fileExists(atPath: target.path) { try? fm.copyItem(at: file, to: target) }
+        }
+    }
+
     private func contentKey(_ item: ClipItem) -> String {
         switch item.type {
         case .image: return "img:" + (item.imageHash ?? item.imageFileName ?? item.id.uuidString)
         case .color: return "col:" + (item.colorHex ?? "")
         case .file:  return "file:" + item.fileURLs.joined(separator: "|")
-        default:     return "txt:" + (item.text ?? "")
+        default:     return "txt:\(item.contentHash)"
         }
     }
 
@@ -1037,6 +1325,7 @@ final class ClipboardStore {
         trimHistory()
         combined.removeAll()
         refreshAllDerivedState()
+        spillPendingRichText()
         selectFirst()
         saveNow()
     }

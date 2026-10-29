@@ -318,13 +318,8 @@ struct BarView: View {
             ScrollViewReader { proxy in
                 ScrollView(.horizontal, showsIndicators: false) {
                     LazyHStack(spacing: Theme.cardSpacing) {
-                        // A `ForEach` over the snapshot: the previous shape
-                        // built `Array(enumerated())` and asked
-                        // `isSelected` per card inside the loop, so every
-                        // selection change re-diffed the whole strip and
-                        // re-evaluated the view body of every visible card.
-                        // `ClipCardView` reads the selection itself now, which
-                        // keeps the strip's own body out of that path.
+                        // Cards read a per-id selection flag, not `selectedID`,
+                        // so an arrow key does not rebuild this row.
                         ForEach(store.visibleItems, id: \.id) { item in
                             ClipCardView(item: item, side: side)
                                 .id(item.id)
@@ -351,7 +346,7 @@ struct BarView: View {
                     // on the array also stops an unchanged strip from being
                     // re-animated when only selection moved.
                     .animation(.spring(response: 0.34, dampingFraction: 0.8),
-                               value: store.visibleItems.map(\.id))
+                               value: store.visibleIDs)
                     .id(Self.stripStartID)
                 }
                 // The scroll view itself, so the probe can find it and the
@@ -366,16 +361,15 @@ struct BarView: View {
                         proxy.scrollTo(Self.stripStartID, anchor: .leading)
                     }
                 }
-                .onChange(of: store.selectedID) { old, new in
-                    guard let new else { return }
-                    selectionDidMove(from: old, to: new, proxy: proxy)
-                }
-                .onChange(of: settings.selectedClipPosition) { _, _ in
-                    // The user just changed the policy: always honour it, even
-                    // in the "don't scroll" mode, so switching back to a
-                    // centering mode visibly re-parks the strip.
-                    guard let id = store.selectedID else { return }
-                    scrollTo(id, proxy: proxy, animated: true)
+                .background {
+                    SelectionFollower(
+                        onSelected: { old, new in
+                            selectionDidMove(from: old, to: new, proxy: proxy)
+                        },
+                        onPositionPolicy: { id in
+                            scrollTo(id, proxy: proxy, animated: true)
+                        }
+                    )
                 }
                 .overlay { if store.visibleItems.isEmpty { emptyState } }
             }
@@ -494,6 +488,28 @@ struct BarView: View {
                 .font(.system(size: 13))
                 .foregroundStyle(Theme.chromeTextSecondary)
         }
+    }
+}
+
+/// Owns `selectedID` so the strip body does not subscribe to it.
+private struct SelectionFollower: View {
+    let onSelected: (_ old: UUID?, _ new: UUID) -> Void
+    let onPositionPolicy: (UUID) -> Void
+    private var store: ClipboardStore { .shared }
+    private var settings: Settings { .shared }
+
+    var body: some View {
+        Color.clear
+            .frame(width: 0, height: 0)
+            .allowsHitTesting(false)
+            .onChange(of: store.selectedID) { old, new in
+                guard let new else { return }
+                onSelected(old, new)
+            }
+            .onChange(of: settings.selectedClipPosition) { _, _ in
+                guard let id = store.selectedID else { return }
+                onPositionPolicy(id)
+            }
     }
 }
 

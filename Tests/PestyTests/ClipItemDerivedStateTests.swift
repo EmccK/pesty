@@ -47,15 +47,29 @@ final class ClipItemDerivedStateTests: XCTestCase {
     }
 
     func testCachedStateSurvivesPersistence() throws {
-        // The cache lives in the file format, so a decoded clip is usable
-        // immediately. `displayTitle` and friends have to match the stored
-        // content and not the (defaulted) cache, which is why both are written.
+        // Derived fields are rebuilt on decode, not stored. A decoded clip is
+        // usable immediately, and the file does not carry a second copy of the text.
         let original = ClipItem(type: .text, text: "persisted")
         let encoded = try JSONEncoder().encode(original)
         let decoded = try JSONDecoder().decode(ClipItem.self, from: encoded)
+        let json = String(decoding: encoded, as: UTF8.self)
 
+        XCTAssertFalse(json.contains("searchTextLowercased"))
+        XCTAssertFalse(json.contains("cachedPreviewText"))
         XCTAssertEqual(decoded.displayTitle, "persisted")
+        XCTAssertEqual(decoded.searchTextLowercased, original.searchTextLowercased)
         XCTAssertEqual(decoded, original)
+    }
+
+    func testSearchHaystackAndPreviewAreCapped() {
+        let text = String(repeating: "A", count: 5_000)
+        let item = ClipItem(type: .text, text: text, sourceAppName: "Safari")
+
+        XCTAssertLessThanOrEqual(item.searchTextLowercased.count, 2_048)
+        XCTAssertTrue(item.searchTextLowercased.hasPrefix(String(repeating: "a", count: 64)))
+        XCTAssertFalse(item.searchTextLowercased.contains("safari"))
+        XCTAssertEqual(item.cachedPreviewText.count, 800)
+        XCTAssertEqual(item.contentHash, ClipItem(type: .text, text: text).contentHash)
     }
 
     func testDecodingRestoresDerivedState() throws {

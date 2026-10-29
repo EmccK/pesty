@@ -23,9 +23,9 @@ enum CKSchema {
     /// `imageFileURL`: full path of the PNG for this clip if any (becomes a CKAsset).
     /// `container`: "history" or pinboard UUID string.
     static func populate(_ record: CKRecord, from item: ClipItem,
-                         container: String, imageFileURL: URL?) {
+                         container: String, imageFileURL: URL?, rtfData: Data?, text: String? = nil) {
         record["type"] = item.type.rawValue
-        if let text = item.text {
+        if let text = text ?? item.text ?? item.textPrefix {
             if text.utf8.count > inlineLimit {
                 record["text"] = nil
                 record["textAsset"] = writeTempAsset(Data(text.utf8), ext: "txt")
@@ -37,7 +37,7 @@ enum CKSchema {
             record["text"] = nil
             record["textAsset"] = nil
         }
-        if let rtf = item.rtfData {
+        if let rtf = rtfData {
             if rtf.count > inlineLimit {
                 record["rtf"] = nil
                 record["rtfAsset"] = writeTempAsset(rtf, ext: "rtf")
@@ -112,7 +112,7 @@ enum CKSchema {
             id: id,
             type: type,
             text: text,
-            rtfData: rtf,
+            pendingRTF: rtf,
             imageFileName: imageAssetURL != nil ? "\(id.uuidString).png" : nil,
             imageHash: record["imageHash"] as? String,
             fileURLs: (record["fileURLs"] as? [String]) ?? [],

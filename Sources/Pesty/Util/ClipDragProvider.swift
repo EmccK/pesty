@@ -42,10 +42,10 @@ enum ClipDragProvider {
                 registerText(item.text ?? item.displayTitle, on: provider)
             }
         case .link:
-            if let text = item.text, let url = URL(string: text) {
+            if let text = ClipboardStore.shared.fullText(for: item), let url = URL(string: text) {
                 provider.registerObject(url as NSURL, visibility: .all)
             }
-            registerText(item.text ?? "", on: provider)
+            registerText(ClipboardStore.shared.fullText(for: item) ?? "", on: provider)
         case .color:
             if let hex = item.colorHex, let color = NSColor(hex: hex),
                let data = try? NSKeyedArchiver.archivedData(withRootObject: color, requiringSecureCoding: true) {
@@ -53,12 +53,12 @@ enum ClipDragProvider {
             }
             registerText(item.colorHex ?? "", on: provider)
         case .richText:
-            if let rtf = item.rtfData {
+            if let rtf = ClipboardStore.shared.blobData(named: item.rtfFileName) {
                 register(rtf, as: UTType.rtf.identifier, on: provider)
             }
-            registerText(item.text ?? "", on: provider)
+            registerText(ClipboardStore.shared.fullText(for: item) ?? "", on: provider)
         case .text:
-            registerText(item.text ?? "", on: provider)
+            registerText(ClipboardStore.shared.fullText(for: item) ?? "", on: provider)
         }
         if provider.suggestedName == nil { provider.suggestedName = item.displayTitle }
         return provider

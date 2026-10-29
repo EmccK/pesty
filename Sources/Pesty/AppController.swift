@@ -568,9 +568,9 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
             return store.loadImage(for: item).map { [$0] } ?? []
         case .file:
             let urls = item.fileURLs.compactMap(URL.init(string:)).filter(\.isFileURL)
-            return urls.isEmpty ? (item.plainText.map { [$0 as NSString] } ?? []) : urls
+            return urls.isEmpty ? (store.fullText(for: item).map { [$0 as NSString] } ?? []) : urls
         case .color, .text, .richText, .link:
-            return item.plainText.map { [$0 as NSString] } ?? []
+            return store.fullText(for: item).map { [$0 as NSString] } ?? []
         }
     }
 

@@ -9,25 +9,31 @@ enum FormatConverter {
     /// at paste time; a pathological clip must not hitch the paste.
     private static let maxRichSourceBytes = 1_000_000
 
+    @MainActor
     static func canConvert(_ item: ClipItem) -> Bool {
-        withinLimit(item.htmlData) || withinLimit(item.rtfData)
+        withinLimit(ClipboardStore.shared.blobByteCount(named: item.htmlFileName))
+            || withinLimit(ClipboardStore.shared.blobByteCount(named: item.rtfFileName))
     }
 
-    private static func withinLimit(_ data: Data?) -> Bool {
-        guard let data else { return false }
-        return !data.isEmpty && data.count <= maxRichSourceBytes
+    private static func withinLimit(_ count: Int?) -> Bool {
+        guard let count else { return false }
+        return count > 0 && count <= maxRichSourceBytes
     }
 
+    @MainActor
     private static func attributed(for item: ClipItem) -> NSAttributedString? {
         // The importer loads no subresources, so the HTML goes in as captured;
         // the timeout only bounds the document load itself.
-        if let html = item.htmlData, withinLimit(html),
+        let store = ClipboardStore.shared
+        if withinLimit(store.blobByteCount(named: item.htmlFileName)),
+           let html = store.blobData(named: item.htmlFileName),
            let s = NSAttributedString(html: html,
                                       options: [.timeout: 2.0],
                                       documentAttributes: nil) {
             return s
         }
-        if let rtf = item.rtfData, withinLimit(rtf),
+        if withinLimit(store.blobByteCount(named: item.rtfFileName)),
+           let rtf = store.blobData(named: item.rtfFileName),
            let s = NSAttributedString(rtf: rtf, documentAttributes: nil) {
             return s
         }
@@ -37,6 +43,7 @@ enum FormatConverter {
     /// Strips fonts, sizes, and colors while keeping the structure people
     /// mean when they say "formatting": bold, italic, underline,
     /// strikethrough, and links — everything else becomes the system font.
+    @MainActor
     static func cleanedRTF(for item: ClipItem) -> Data? {
         guard let source = attributed(for: item) else { return nil }
         let base = NSFont.systemFont(ofSize: NSFont.systemFontSize)
@@ -72,6 +79,7 @@ enum FormatConverter {
     /// Walks the attributed runs producing Markdown for bold, italic, and
     /// links. Markers never wrap line breaks — each line segment inside a
     /// styled run is marked separately so the output stays valid Markdown.
+    @MainActor
     static func markdown(for item: ClipItem) -> String? {
         guard let source = attributed(for: item) else { return nil }
         var out = ""

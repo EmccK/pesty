@@ -207,7 +207,9 @@ final class CloudSyncService {
         if let (item, container) = lookupClip(recordName: name) {
             let record = baseRecord(name: name, type: CKSchema.clipType)
             CKSchema.populate(record, from: item, container: container,
-                              imageFileURL: item.type == .image ? store.imageURL(for: item) : nil)
+                              imageFileURL: item.type == .image ? store.imageURL(for: item) : nil,
+                              rtfData: store.blobData(named: item.rtfFileName),
+                              text: store.fullText(for: item))
             return record
         }
         engine?.state.remove(pendingRecordZoneChanges: [.saveRecord(recordID)])
@@ -309,8 +311,8 @@ final class CloudSyncService {
             hasher.update(data: Data([0]))
         }
         feed(item.type.rawValue)
-        feed(item.text ?? "")
-        if let rtf = item.rtfData { hasher.update(data: rtf) }
+        feed(String(item.contentHash))
+        feed(item.rtfFileName ?? "")
         feed(item.imageFileName ?? "")
         feed(item.imageHash ?? "")
         feed(item.fileURLs.joined(separator: "|"))

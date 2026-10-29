@@ -69,7 +69,7 @@ struct ClipPreviewView: View {
                 }
             }
         case .text, .richText, .link:
-            if let text = item.text, !text.isEmpty {
+            if let text = store.fullText(for: item), !text.isEmpty {
                 Text(text)
                     .font(.system(size: 14))
                     .textSelection(.enabled)

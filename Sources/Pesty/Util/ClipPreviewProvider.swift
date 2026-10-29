@@ -93,20 +93,37 @@ enum ClipPreviewProvider {
         return FileInfo(icon: icon, isMissing: false)
     }
 
-    /// A preview that can be produced without an async hop: the bitmap is
-    /// already in memory for image clips, and file thumbnails go through
-    /// QuickLook, which is the only one that has to wait.
-    ///
-    /// Card bodies ask for a preview the moment the card appears; returning
-    /// synchronously here keeps a card that scrolls back into view from
-    /// flashing empty for a frame before its cached bitmap lands.
-    static func synchronouslyLoadableImage(for item: ClipItem) -> NSImage? {
-        guard item.type == .image,
-              let url = ClipboardStore.shared.imageURL(for: item),
-              let key = imageKey(for: item),
-              let decoded = decode(url) else { return nil }
-        images.setObject(decoded, forKey: key, cost: cost(of: decoded))
-        return decoded
+    static func storePreview(_ image: NSImage, for item: ClipItem) {
+        guard let key = imageKey(for: item) else { return }
+        images.setObject(image, forKey: key, cost: cost(of: image))
+    }
+
+    /// Decodes the first screen of images off the main thread before the bar
+    /// is on screen, so card bodies only hit the cache.
+    static func warm(_ items: [ClipItem]) {
+        let jobs: [(ClipItem, URL)] = items.compactMap { item in
+            guard showsImage(item), cachedImage(for: item) == nil else { return nil }
+            let url = item.type == .image
+                ? ClipboardStore.shared.imageURL(for: item)
+                : imageFileURL(for: item)
+            guard let url else { return nil }
+            return (item, url)
+        }
+        guard !jobs.isEmpty else { return }
+        DispatchQueue.global(qos: .userInitiated).async {
+            let decoded = jobs.compactMap { item, url -> (ClipItem, NSImage)? in
+                guard let image = decode(url) else { return nil }
+                return (item, image)
+            }
+            guard !decoded.isEmpty else { return }
+            DispatchQueue.main.async {
+                for (item, image) in decoded { storePreview(image, for: item) }
+            }
+        }
+    }
+
+    nonisolated static func decodeThumbnail(at url: URL) -> NSImage? {
+        decode(url)
     }
 
     /// The cached `FileInfo` for a clip, if a previous appearance resolved it.
