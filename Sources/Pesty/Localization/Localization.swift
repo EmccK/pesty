@@ -83,9 +83,12 @@ final class Localization: @unchecked Sendable {
         if let resources = Bundle.main.resourceURL {
             candidates.append(resources.appendingPathComponent(name))
         }
-        // Inside a test run the app module is linked into the .xctest bundle,
-        // so the resource bundle sits beside that bundle rather than Bundle.main.
-        if let resources = Bundle(for: ResourceBundleFinder.self).resourceURL {
+        // Inside a test run the app module is linked into the .xctest bundle.
+        // `swift test` leaves the resource bundle next to that bundle in the
+        // build directory; an Xcode-driven test run copies it inside.
+        let testBundle = Bundle(for: ResourceBundleFinder.self)
+        candidates.append(testBundle.bundleURL.deletingLastPathComponent().appendingPathComponent(name))
+        if let resources = testBundle.resourceURL {
             candidates.append(resources.appendingPathComponent(name))
         }
         candidates.append(Bundle.main.bundleURL.appendingPathComponent(name))
