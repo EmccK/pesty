@@ -31,13 +31,13 @@ final class ClipUndoStackTests: XCTestCase {
         let item = ClipItem(type: .image, imageFileName: "shot.png")
         stack.push([placement(item, index: 0)], at: start)
         XCTAssertEqual(stack.nextExpiration, start.addingTimeInterval(300))
-        XCTAssertTrue(stack.retainsImageFile(named: "shot.png"))
+        XCTAssertTrue(stack.retainedFileNames.contains("shot.png"))
 
         XCTAssertTrue(stack.removeExpired(at: start.addingTimeInterval(299)).isEmpty)
         XCTAssertNil(stack.pop(at: start.addingTimeInterval(300)))
         let expired = stack.removeExpired(at: start.addingTimeInterval(300))
         XCTAssertEqual(expired.first?.placements.first?.item.id, item.id)
-        XCTAssertFalse(stack.retainsImageFile(named: "shot.png"))
+        XCTAssertFalse(stack.retainedFileNames.contains("shot.png"))
         XCTAssertNil(stack.nextExpiration)
     }
 

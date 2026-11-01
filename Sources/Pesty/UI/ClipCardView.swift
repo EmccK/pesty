@@ -210,7 +210,7 @@ struct ClipCardView: View {
     /// icon belongs to the log. Paste drops it from a pinned card in history
     /// too, leaving the age as the only thing history adds.
     private var showsSourceIcon: Bool {
-        isHistory && !store.isPinned(item)
+        isHistory && !item.isPinned
     }
 
     /// The color of the board this clip belongs to, if it is on one.
@@ -562,7 +562,7 @@ struct ClipCardView: View {
         // Paste's `remove_item_from_pinboard`: the clip goes back to being
         // history-only, and because history and boards share one record it is
         // still there afterwards. Only offered where it means something.
-        if store.isPinned(item) {
+        if item.isPinned {
             Button { store.removeFromPinboard(item) } label: {
                 Label(L("Unpin"), systemImage: "pin.slash")
             }

@@ -62,7 +62,11 @@ final class AppController: NSObject, NSApplicationDelegate, NSWindowDelegate {
         // A card's band color comes from sampling its source app's icon, which
         // costs a few milliseconds per app on the main thread. Do it here, one
         // app per turn, rather than during the first bar presentation.
-        AppIconProvider.warmCache(for: store.history.compactMap(\.sourceBundleID))
+        AppIconProvider.warmCache(for: store.items.compactMap(\.sourceBundleID))
+
+        if let notice = store.launchNotice {
+            copyToast.show(message: notice, symbol: "exclamationmark.triangle.fill", linger: 8)
+        }
 
         if Settings.shared.launchAtLogin { LaunchAtLogin.set(enabled: true) }
 

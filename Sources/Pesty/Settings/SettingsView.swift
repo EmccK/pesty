@@ -1,5 +1,6 @@
 import SwiftUI
 import AppKit
+import Combine
 
 struct SettingsView: View {
     @State private var tab: Tab = .general

@@ -30,6 +30,17 @@ enum ClipType: String, Codable, CaseIterable {
         }
     }
 
+    /// An http(s) URL with a host and nothing else on the line.
+    static func isWebLink(_ text: String) -> Bool {
+        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !value.contains(" "), !value.contains("\n"),
+              let url = URL(string: value),
+              let scheme = url.scheme?.lowercased(),
+              ["http", "https"].contains(scheme),
+              url.host != nil else { return false }
+        return true
+    }
+
     var symbol: String {
         switch self {
         case .text:     return "text.alignleft"

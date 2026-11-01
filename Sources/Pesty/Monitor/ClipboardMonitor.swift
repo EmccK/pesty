@@ -135,7 +135,7 @@ final class ClipboardMonitor {
             let type: ClipType
             if rtf != nil {
                 type = .richText
-            } else if isLink(trimmed) {
+            } else if ClipType.isWebLink(trimmed) {
                 type = .link
             } else {
                 type = .text
@@ -211,15 +211,6 @@ final class ClipboardMonitor {
               let bundle = Bundle(url: url) else { return nil }
         return (bundle.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String)
             ?? (bundle.object(forInfoDictionaryKey: "CFBundleName") as? String)
-    }
-
-    private func isLink(_ s: String) -> Bool {
-        guard !s.contains(" "), !s.contains("\n"),
-              let url = URL(string: s),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              url.host != nil else { return false }
-        return true
     }
 }
 

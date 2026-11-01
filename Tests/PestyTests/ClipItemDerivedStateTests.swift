@@ -46,6 +46,18 @@ final class ClipItemDerivedStateTests: XCTestCase {
         XCTAssertEqual(item.searchTextLowercased, "brand new content")
     }
 
+    func testRefreshRelativeDateMovesTheAgeForward() {
+        let created = Date()
+        var item = ClipItem(type: .text, text: "fresh", createdAt: created)
+        XCTAssertEqual(item.cachedRelativeDate, L("Just now"))
+
+        let later = created.addingTimeInterval(300)
+        item.refreshRelativeDate(now: later)
+
+        XCTAssertEqual(item.cachedRelativeDate, ClipItem.relativeDate(for: created, now: later))
+        XCTAssertNotEqual(item.cachedRelativeDate, L("Just now"))
+    }
+
     func testCachedStateSurvivesPersistence() throws {
         // Derived fields are rebuilt on decode, not stored. A decoded clip is
         // usable immediately, and the file does not carry a second copy of the text.

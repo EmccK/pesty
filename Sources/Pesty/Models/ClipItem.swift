@@ -254,8 +254,16 @@ struct ClipItem: Identifiable, Codable, Equatable {
         }
     }
 
-    /// Kept for callers outside the filter; the strip reads the cached field.
-    var searchableText: String { searchTextLowercased }
+    /// Sidecars in the store's blob directory.
+    var blobFileNames: [String] { [textFileName, rtfFileName, htmlFileName].compactMap { $0 } }
+
+    /// Every file on disk this clip points at.
+    var ownedFileNames: [String] { blobFileNames + (imageFileName.map { [$0] } ?? []) }
+
+    /// The band's age is cached at capture; the bar refreshes it on show.
+    mutating func refreshRelativeDate(now: Date = Date()) {
+        cachedRelativeDate = Self.relativeDate(for: createdAt, now: now)
+    }
 
     func sameContent(as other: ClipItem) -> Bool {
         guard type == other.type else { return false }

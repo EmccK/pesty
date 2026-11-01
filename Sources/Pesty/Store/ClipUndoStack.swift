@@ -63,16 +63,13 @@ struct ClipUndoStack {
         return deletions
     }
 
-    func retainsImageFile(named name: String) -> Bool {
-        deletions.contains { $0.placements.contains { $0.item.imageFileName == name } }
-    }
-
-    func retainsRichFile(named name: String) -> Bool {
-        deletions.contains {
-            $0.placements.contains {
-                $0.item.rtfFileName == name || $0.item.htmlFileName == name || $0.item.textFileName == name
-            }
+    /// Files the deletions still open for Undo keep alive on disk.
+    var retainedFileNames: Set<String> {
+        var names = Set<String>()
+        for deletion in deletions {
+            for placement in deletion.placements { names.formUnion(placement.item.ownedFileNames) }
         }
+        return names
     }
 
     private static func isExpired(_ deletion: ClipDeletion, at date: Date) -> Bool {

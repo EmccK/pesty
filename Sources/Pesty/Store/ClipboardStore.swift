@@ -1,5 +1,6 @@
 import AppKit
 import Observation
+import os
 
 extension Notification.Name {
     static let pestyStoreDidSave = Notification.Name("PestyStoreDidSave")
@@ -91,11 +92,6 @@ final class ClipboardStore {
     /// usually already selected and `onChange` never fires for equal values.
     private(set) var barPresentationToken = 0
 
-    var historyLimit: Int {
-        get { Settings.shared.historyLimit }
-        set { Settings.shared.historyLimit = newValue; trimHistory() }
-    }
-
     private var storeURL: URL
     private var imagesDir: URL
     private var blobsDir: URL
@@ -103,7 +99,20 @@ final class ClipboardStore {
     private var saveWorkItem: DispatchWorkItem?
 
     private var fileWatch: DispatchSourceFileSystemObject?
-    private var ignoreWatchUntil: Date = .distantPast
+    /// Bytes of the last snapshot this process wrote, so the file watch can
+    /// tell this app's own save from another Mac's.
+    private nonisolated static let lastWritten = OSAllocatedUnfairLock<Data?>(initialState: nil)
+
+    /// Clip and board ids deleted here, with when. Another Mac merging this
+    /// file drops them instead of syncing them back.
+    private var tombstones: [String: Date] = [:]
+    private static let tombstoneRetention: TimeInterval = 30 * 86_400
+
+    /// Set when the store file exists but could not be read. Saving would
+    /// overwrite history this launch never saw, so it stays off.
+    private var storeIsReadOnly = false
+    /// Shown once at launch when the history file was unreadable.
+    private(set) var launchNotice: String?
 
     static var localBase: URL {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -150,24 +159,9 @@ final class ClipboardStore {
 
     // MARK: - Collections
 
-    /// Every clip the store holds, newest copied first.
-    ///
-    /// History is not a separate collection: a pinned clip is still a history
-    /// entry, so the whole array is what the history tab shows. This is the
-    /// same shape Paste has, where one record is pointed at by the clipboard
-    /// list and by at most one pinboard.
-    var history: [ClipItem] { items }
-
-    /// Clips pinned to `boardID`, in the order they were pinned (newest first).
-    func pinnedItems(in boardID: UUID) -> [ClipItem] {
-        items
-            .filter { $0.list == boardID }
-            .sorted { ($0.pinnedAt ?? $0.createdAt) > ($1.pinnedAt ?? $1.createdAt) }
-    }
-
-    /// Whether the clip is on a board. Paste shows this on the card itself,
-    /// which is the whole reason the pin lives on the clip.
-    func isPinned(_ item: ClipItem) -> Bool { item.list != nil }
+    /// Boards and clips share one table: history is `items`, and `list` names
+    /// the board a clip is also on, so "the history" and "the clips on a board"
+    /// are the same array read two ways.
 
     func pinboard(of item: ClipItem) -> Pinboard? {
         guard let list = item.list else { return nil }
@@ -189,14 +183,21 @@ final class ClipboardStore {
     private var cachedVisibleItems: [ClipItem]?
     /// Position of each clip in `cachedVisibleItems`, so a card's ⌘-number
     /// hint costs a dictionary lookup instead of a linear scan.
-    private var cachedVisibleIndex: [UUID: Int] = [:]
-    private var cachedVisibleIDs: [UUID] = []
-    private var indexByID: [UUID: Int] = [:]
-    private var indexByContent: [UInt64: Int] = [:]
-    private var indexIsStale = true
-    private var selectionFlags: [UUID: SelectionFlag] = [:]
-    private var saveGeneration = 0
-    private let saveLock = NSLock()
+    ///
+    /// `@ObservationIgnored` on every cache below: all of them are written
+    /// while cards are on screen, so a card that subscribed to one would
+    /// invalidate on each write. Readers depend on `cachedVisibleItems`, the
+    /// one cache whose invalidation means "the strip changed".
+    @ObservationIgnored private var cachedVisibleIndex: [UUID: Int] = [:]
+    @ObservationIgnored private var cachedVisibleIDs: [UUID] = []
+    @ObservationIgnored private var indexByID: [UUID: Int] = [:]
+    @ObservationIgnored private var indexByContent: [UInt64: Int] = [:]
+    @ObservationIgnored private var indexIsStale = true
+    /// One flag per clip, so a selection change repaints the two cards whose
+    /// flag flipped. The dictionary itself must stay unobserved: as observed
+    /// state, assigning it invalidated every card in the strip - which is what
+    /// the per-clip flag exists to avoid.
+    @ObservationIgnored private var selectionFlags: [UUID: SelectionFlag] = [:]
     private let saveQueue = DispatchQueue(label: "pesty.save", qos: .utility)
 
     private func invalidateVisibleItems() {
@@ -254,7 +255,7 @@ final class ClipboardStore {
         incoming.list = nil
         incoming.pinnedAt = nil
         if let idx = duplicateIndex(of: incoming) {
-            releaseFiles(incoming)
+            releaseFiles(of: [incoming])
             var existing = items.remove(at: idx)
             existing.createdAt = incoming.createdAt
             existing.refreshDerivedState()
@@ -342,6 +343,7 @@ final class ClipboardStore {
     private func trimHistory() {
         var removed: [ClipItem] = []
         let pruneable = items.indices.filter { !items[$0].isPinned }
+        let historyLimit = Settings.shared.historyLimit
         switch Settings.shared.historyRetentionMode {
         case .itemCount:
             if pruneable.count > historyLimit {
@@ -362,7 +364,9 @@ final class ClipboardStore {
         guard !removed.isEmpty else { return }
         let ids = Set(removed.map(\.id))
         items.removeAll { ids.contains($0.id) }
-        for item in removed { releaseFiles(item) }
+        releaseFiles(of: removed)
+        // Deliberately no tombstone: retention prunes this Mac's history, and
+        // a second Mac's copy of the same clip is not this Mac's to delete.
         markRetentionPruned(removed)
         if let sel = selectedID, ids.contains(sel) { selectFirst() }
         reconcileMultiSelection()
@@ -401,10 +405,11 @@ final class ClipboardStore {
 
         let placements = Self.placements(of: ids, in: items, container: source)
         items.removeAll { ids.contains($0.id) }
-        // The record is gone, so its image can go too - unless the undo stack
-        // is still holding it for a restore.
+        recordTombstones(ids)
+        // The record is gone, so its files can go too - unless the undo stack
+        // is still holding them for a restore.
         if permanently || Settings.shared.deletePermanently {
-            for placement in placements { releaseFiles(placement.item) }
+            releaseFiles(of: placements.map(\.item))
         }
         // Permanent deletes are not undoable.
         if !permanently && !Settings.shared.deletePermanently {
@@ -438,7 +443,8 @@ final class ClipboardStore {
         items.removeAll { ids.contains($0.id) }
         selectedID = nil
         forgetDeletions()
-        for item in cleared { releaseFiles(item) }
+        recordTombstones(ids)
+        releaseFiles(of: cleared)
         reconcileMultiSelection()
         scheduleSave()
     }
@@ -468,6 +474,10 @@ final class ClipboardStore {
             if restore(placement) { restored.append(placement.item.id) }
         }
         refreshUndoState()
+        // The clip is back, so the tombstone that recorded its deletion has to
+        // go: otherwise the next merge reads it as deleted and removes it again
+        // on every Mac that has not seen the undo.
+        for id in restored { tombstones.removeValue(forKey: id.uuidString) }
         if let id = restored.first(where: { id in visibleItems.contains(where: { $0.id == id }) }) {
             selectedID = id
             selectionAnchorID = id
@@ -489,14 +499,14 @@ final class ClipboardStore {
             break
         case .pinboard(let boardID):
             guard pinboards.contains(where: { $0.id == boardID }) else {
-                releaseFiles(item)
+                releaseFiles(of: [item])
                 return false
             }
             item.list = boardID
         }
         let already = itemIndex(of: item.id) != nil || duplicateIndex(of: item) != nil
         if already {
-            releaseFiles(item)
+            releaseFiles(of: [item])
             return false
         }
         items.insert(item, at: Self.historyInsertionIndex(for: item, in: items))
@@ -514,7 +524,7 @@ final class ClipboardStore {
     private func refreshUndoState() {
         let now = Date()
         for deletion in undoStack.removeExpired(at: now) {
-            for placement in deletion.placements { releaseFiles(placement.item) }
+            releaseFiles(of: deletion.placements.map(\.item))
         }
         hasUndoableDeletion = !undoStack.isEmpty
         undoExpirationWorkItem?.cancel()
@@ -532,7 +542,7 @@ final class ClipboardStore {
     /// image files it kept would otherwise be orphaned.
     func forgetDeletions() {
         for deletion in undoStack.removeAll() {
-            for placement in deletion.placements { releaseFiles(placement.item) }
+            releaseFiles(of: deletion.placements.map(\.item))
         }
         refreshUndoState()
     }
@@ -569,6 +579,7 @@ final class ClipboardStore {
         guard let i = pinboards.firstIndex(where: { $0.id == id }) else { return }
         if case .pinboard(let cur) = source, cur == id { source = .history }
         pinboards.remove(at: i)
+        recordTombstones([id])
         for index in items.indices where items[index].list == id {
             items[index].list = nil
             items[index].pinnedAt = nil
@@ -643,7 +654,7 @@ final class ClipboardStore {
     func updateTextContent(_ text: String, richTextData: Data? = nil, for item: ClipItem) -> Bool {
         guard [.text, .richText, .link].contains(item.type),
               !text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { return false }
-        let type: ClipType = richTextData != nil ? .richText : (isWebLink(text) ? .link : .text)
+        let type: ClipType = richTextData != nil ? .richText : (ClipType.isWebLink(text) ? .link : .text)
         let newRTF = richTextData.flatMap { storeBlob($0, ext: "rtf") }
         let previousRTF = item.rtfFileName
         let previousHTML = item.htmlFileName
@@ -663,11 +674,9 @@ final class ClipboardStore {
         }
         if ok {
             spill(&items[0])
-            if previousText != items[0].textFileName { deleteBlobIfUnused(previousText) }
-            if previousRTF != newRTF { deleteBlobIfUnused(previousRTF) }
-            deleteBlobIfUnused(previousHTML)
+            deleteBlobsIfUnused([previousText, previousRTF, previousHTML])
         } else if newRTF != previousRTF {
-            deleteBlobIfUnused(newRTF)
+            deleteBlobsIfUnused([newRTF])
         }
         return ok
     }
@@ -690,9 +699,7 @@ final class ClipboardStore {
             return updated
         }
         if ok {
-            deleteBlobIfUnused(previousRTF)
-            deleteBlobIfUnused(previousHTML)
-            deleteBlobIfUnused(previousText)
+            deleteBlobsIfUnused([previousRTF, previousHTML, previousText])
         }
         return ok
     }
@@ -714,16 +721,11 @@ final class ClipboardStore {
         return true
     }
 
-    /// Editing a clip's content can make it match another clip. Two records with
-    /// the same content in the same collection would render as twins, so the
-    /// older one goes - only within the same collection, since a clip in history
-    /// and a clip on a board are different records on purpose.
-    /// Drops any other record holding the same content.
-    ///
-    /// One record per copied thing is the whole point of the single table, so
-    /// content is unique across it rather than within a container: editing a
-    /// clip until it matches another one has to leave one record behind, the
-    /// same way capturing a duplicate does.
+    /// Editing a clip's content can make it match another clip. One record per
+    /// copied thing is the whole point of the single table, so content is
+    /// unique across it rather than within a container: editing a clip until it
+    /// matches another one has to leave one record behind, the same way
+    /// capturing a duplicate does.
     private func removeContentDuplicates(of item: ClipItem) {
         let duplicates = items.filter {
             $0.id != item.id && $0.contentHash == item.contentHash && $0.sameContent(as: item)
@@ -731,17 +733,7 @@ final class ClipboardStore {
         guard !duplicates.isEmpty else { return }
         let ids = Set(duplicates.map(\.id))
         items.removeAll { ids.contains($0.id) }
-        for duplicate in duplicates { releaseFiles(duplicate) }
-    }
-
-    private func isWebLink(_ text: String) -> Bool {
-        let value = text.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !value.contains(" "), !value.contains("\n"),
-              let url = URL(string: value),
-              let scheme = url.scheme?.lowercased(),
-              ["http", "https"].contains(scheme),
-              url.host != nil else { return false }
-        return true
+        releaseFiles(of: duplicates)
     }
 
     func setTitle(_ title: String, for item: ClipItem) {
@@ -902,11 +894,22 @@ final class ClipboardStore {
 
     func prepareForBarPresentation() {
         applyRetentionPolicy()
+        refreshVisibleAges()
         clearMultiSelection()
         barPresentationToken &+= 1
         selectFirst()
         refreshSelectionFlags()
         warmPreviews()
+    }
+
+    /// A band's age is cached at capture, so without this every clip copied in
+    /// this session kept reading "Just now" until its content changed.
+    /// ponytail: the 64 newest cards only. Formatting all 5000 costs 40 ms,
+    /// and this runs on the hotkey path.
+    private func refreshVisibleAges() {
+        let now = Date()
+        let indices = visibleIDs.prefix(64).compactMap { itemIndex(of: $0) }
+        for index in indices { items[index].refreshRelativeDate(now: now) }
     }
 
     private func warmPreviews() {
@@ -970,18 +973,48 @@ final class ClipboardStore {
         Self.writeImage(data, to: imagesDir)
     }
 
-    private func releaseFiles(_ item: ClipItem) {
-        deleteImageFile(item)
-        deleteBlobIfUnused(item.rtfFileName)
-        deleteBlobIfUnused(item.htmlFileName)
+    /// Every file name a surviving clip or an undoable deletion still points
+    /// at. Built once per batch: checking file by file walked the whole table
+    /// for each removed clip, which made Clear History quadratic.
+    private func liveFileNames() -> Set<String> {
+        var names = undoStack.retainedFileNames
+        for item in items { names.formUnion(item.ownedFileNames) }
+        return names
     }
 
-    private func deleteImageFile(_ item: ClipItem) {
-        guard let name = item.imageFileName else { return }
-        let stillUsed = items.contains { $0.imageFileName == name }
-            || undoStack.retainsImageFile(named: name)
-        if stillUsed { return }
-        if let url = imageURL(for: item) { try? FileManager.default.removeItem(at: url) }
+    /// Deletes the files a batch of removed clips owns, keeping anything a
+    /// surviving clip or an undoable deletion still uses.
+    private func releaseFiles(of removed: [ClipItem]) {
+        guard !removed.isEmpty else { return }
+        let live = liveFileNames()
+        let fm = FileManager.default
+        for item in removed {
+            for blob in item.blobFileNames where !live.contains(blob) {
+                try? fm.removeItem(at: blobsDir.appendingPathComponent(blob))
+            }
+            guard let image = item.imageFileName, !live.contains(image) else { continue }
+            try? fm.removeItem(at: imagesDir.appendingPathComponent(image))
+        }
+    }
+
+    /// Removes sidecar and image files no clip points at.
+    ///
+    /// Needed once for the text bodies earlier builds never deleted, and cheap
+    /// enough to keep at every launch. Files under an hour old are left alone:
+    /// with iCloud Drive, a clip recorded on the other Mac can arrive after its
+    /// file does, and the file has to survive the gap.
+    nonisolated static func pruneOrphans(in directories: [URL], live: Set<String>, modifiedBefore cutoff: Date) {
+        let fm = FileManager.default
+        for directory in directories {
+            guard let files = try? fm.contentsOfDirectory(
+                at: directory, includingPropertiesForKeys: [.contentModificationDateKey]) else { continue }
+            for file in files where !live.contains(file.lastPathComponent) {
+                guard let modified = (try? file.resourceValues(forKeys: [.contentModificationDateKey]))?
+                        .contentModificationDate,
+                      modified < cutoff else { continue }
+                try? fm.removeItem(at: file)
+            }
+        }
     }
 
     var blobsDirectory: URL { blobsDir }
@@ -1031,14 +1064,12 @@ final class ClipboardStore {
         } catch { return nil }
     }
 
-    private func deleteBlobIfUnused(_ name: String?) {
-        guard let name else { return }
-        let stillUsed = items.contains {
-            $0.rtfFileName == name || $0.htmlFileName == name || $0.textFileName == name
+    /// Drops the blobs an edit replaced, unless something else still points at them.
+    private func deleteBlobsIfUnused(_ names: [String?]) {
+        let live = liveFileNames()
+        for case let name? in names where !live.contains(name) {
+            try? FileManager.default.removeItem(at: blobsDir.appendingPathComponent(name))
         }
-            || undoStack.retainsRichFile(named: name)
-        if stillUsed { return }
-        try? FileManager.default.removeItem(at: blobsDir.appendingPathComponent(name))
     }
 
     private func spill(_ item: inout ClipItem) {
@@ -1058,6 +1089,7 @@ final class ClipboardStore {
         }
     }
 
+    @discardableResult
     private func spillPendingRichText() -> Bool {
         var spilled = false
         for index in items.indices where items[index].pendingRTF != nil
@@ -1075,13 +1107,55 @@ final class ClipboardStore {
     private struct Snapshot: Codable {
         var items: [ClipItem]
         var pinboards: [Pinboard]
+        /// Ids deleted on the Mac that wrote the file, with when. Absent in
+        /// files from earlier builds.
+        var deleted: [String: Date]
+
+        init(items: [ClipItem], pinboards: [Pinboard], deleted: [String: Date]) {
+            self.items = items
+            self.pinboards = pinboards
+            self.deleted = deleted
+        }
+
+        init(from decoder: Decoder) throws {
+            let c = try decoder.container(keyedBy: CodingKeys.self)
+            items = try c.decode([ClipItem].self, forKey: .items)
+            pinboards = try c.decode([Pinboard].self, forKey: .pinboards)
+            deleted = try c.decodeIfPresent([String: Date].self, forKey: .deleted) ?? [:]
+        }
     }
 
     private func load() {
-        guard let data = try? Data(contentsOf: storeURL),
-              let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
+        guard FileManager.default.fileExists(atPath: storeURL.path) else { return }
+        let data: Data
+        do {
+            data = try Data(contentsOf: storeURL)
+        } catch {
+            // The file is there but cannot be read - an iCloud Drive folder
+            // still downloading, a permission problem. History is unknown, so
+            // nothing may overwrite it.
+            storeIsReadOnly = true
+            launchNotice = L("Couldn't read your clipboard history. Nothing will be saved until Pesty is relaunched.")
+            return
+        }
+        let snap: Snapshot
+        do {
+            snap = try JSONDecoder().decode(Snapshot.self, from: data)
+        } catch {
+            // Readable bytes that are not this app's format. Keep them under a
+            // new name: writing an empty store over them is how a damaged file
+            // turns into a lost history.
+            guard let name = Self.quarantine(storeAt: storeURL) else {
+                storeIsReadOnly = true
+                launchNotice = L("Couldn't read your clipboard history. Nothing will be saved until Pesty is relaunched.")
+                return
+            }
+            launchNotice = L("Your clipboard history was unreadable and has been set aside as %@.", name)
+            return
+        }
         items = snap.items
         pinboards = snap.pinboards
+        tombstones = snap.deleted
         // Boards used to be created in one fixed blue that predates the
         // palette. Moving them onto the palette's blue keeps every board
         // showing a selected swatch, and the two are close enough that no board
@@ -1089,63 +1163,80 @@ final class ClipboardStore {
         for i in pinboards.indices where pinboards[i].colorHex.uppercased() == "#5B8DEF" {
             pinboards[i].colorHex = "#007AFF"
         }
-        // A clip pointing at a board that no longer exists would be invisible in
-        // both views; fall it back to history instead.
-        let boardIDs = Set(pinboards.map(\.id))
-        for i in items.indices where items[i].list != nil && !boardIDs.contains(items[i].list!) {
-            items[i].list = nil
-            items[i].pinnedAt = nil
-        }
         items.sort { $0.createdAt > $1.createdAt }
-        // Decoded clips carry empty derived fields: they are neither stored nor
-        // compared, so the whole library has to be rebuilt once on load.
-        refreshAllDerivedState()
+        Self.unpinOrphanedClips(&items, boards: pinboards)
         if spillPendingRichText() { saveNow() }
         selectFirst()
+
+        let live = liveFileNames()
+        let directories = [blobsDir, imagesDir]
+        saveQueue.async {
+            Self.pruneOrphans(in: directories, live: live, modifiedBefore: Date().addingTimeInterval(-3600))
+        }
     }
 
-    /// Rebuilds the per-clip caches for every clip. Runs once after a decode,
-    /// where none of them survived, and never on a render path.
-    private func refreshAllDerivedState() {
-        let now = Date()
-        for i in items.indices { items[i].refreshDerivedState(now: now) }
+    /// Moves an undecodable store aside so the next save cannot overwrite it.
+    nonisolated static func quarantine(storeAt url: URL) -> String? {
+        let name = "store.corrupt-\(Int(Date().timeIntervalSince1970)).json"
+        let target = url.deletingLastPathComponent().appendingPathComponent(name)
+        do {
+            try FileManager.default.moveItem(at: url, to: target)
+            return name
+        } catch {
+            return nil
+        }
+    }
+
+    /// A clip pointing at a board that no longer exists would be invisible in
+    /// both views; fall it back to history instead.
+    private static func unpinOrphanedClips(_ clips: inout [ClipItem], boards: [Pinboard]) {
+        let boardIDs = Set(boards.map(\.id))
+        for i in clips.indices where clips[i].list.map({ !boardIDs.contains($0) }) == true {
+            clips[i].list = nil
+            clips[i].pinnedAt = nil
+        }
     }
 
     private func scheduleSave() {
         saveWorkItem?.cancel()
-        let work = DispatchWorkItem { [weak self] in self?.saveNow() }
+        let work = DispatchWorkItem { [weak self] in self?.saveInBackground() }
         saveWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.4, execute: work)
     }
 
-    func saveNow() {
-        saveWorkItem?.cancel()
+    /// The debounced save: encodes and writes off the main thread.
+    private func saveInBackground() {
         saveWorkItem = nil
-        saveLock.lock()
-        saveGeneration += 1
-        let generation = saveGeneration
-        saveLock.unlock()
-        let snapshot = Snapshot(items: items, pinboards: pinboards)
+        guard !storeIsReadOnly else { return }
+        let snapshot = Snapshot(items: items, pinboards: pinboards, deleted: tombstones)
         let url = storeURL
         saveQueue.async {
-            guard let data = try? JSONEncoder().encode(snapshot) else { return }
-            self.saveLock.lock()
-            let current = self.saveGeneration
-            self.saveLock.unlock()
-            guard current == generation else { return }
-            DispatchQueue.main.sync {
-                self.ignoreWatchUntil = Date().addingTimeInterval(1.5)
-            }
-            try? data.write(to: url, options: .atomic)
-            try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
+            Self.write(snapshot, to: url)
             DispatchQueue.main.async {
-                self.saveLock.lock()
-                let stillCurrent = self.saveGeneration == generation
-                self.saveLock.unlock()
-                guard stillCurrent else { return }
                 NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil)
             }
         }
+    }
+
+    /// Writes before returning, for the moments the file has to be on disk
+    /// when the call ends: quitting, and the merges that hand a result to the
+    /// other Mac. It goes through the same serial queue, so a background save
+    /// already under way cannot land after this one.
+    func saveNow() {
+        saveWorkItem?.cancel()
+        saveWorkItem = nil
+        guard !storeIsReadOnly else { return }
+        let snapshot = Snapshot(items: items, pinboards: pinboards, deleted: tombstones)
+        let url = storeURL
+        saveQueue.sync { Self.write(snapshot, to: url) }
+        NotificationCenter.default.post(name: .pestyStoreDidSave, object: nil)
+    }
+
+    private nonisolated static func write(_ snapshot: Snapshot, to url: URL) {
+        guard let data = try? JSONEncoder().encode(snapshot) else { return }
+        lastWritten.withLock { $0 = data }
+        try? data.write(to: url, options: .atomic)
+        try? FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: url.path)
     }
 
     // MARK: - Remote (CloudKit) apply
@@ -1200,7 +1291,7 @@ final class ClipboardStore {
             items[index].list = nil
             items[index].pinnedAt = nil
         }
-        for item in removed { releaseFiles(item) }
+        releaseFiles(of: removed)
         if let sel = selectedID, set.contains(sel) { selectFirst() }
         reconcileMultiSelection()
         scheduleSave()
@@ -1229,21 +1320,18 @@ final class ClipboardStore {
         if let dupIdx = duplicateIndex(of: item) {
             let dup = items[dupIdx]
             if dup.createdAt >= item.createdAt {
-                releaseFiles(item)
-                for old in replaced { releaseFiles(old) }
+                releaseFiles(of: [item] + replaced)
                 return
             }
             items.remove(at: dupIdx)
-            releaseFiles(dup)
+            releaseFiles(of: [dup])
         }
-        // Decoded from a sync record: no derived fields travelled with it.
         var incoming = item
-        incoming.refreshDerivedState()
         spill(&incoming)
         items.insert(incoming, at: Self.historyInsertionIndex(for: incoming, in: items))
         retentionPrunedRecordNames.remove(item.id.uuidString)
-        // Same-id replace: drop the old image file unless something still uses it.
-        for old in replaced { releaseFiles(old) }
+        // Same-id replace: drop the old files unless something still uses them.
+        releaseFiles(of: replaced)
     }
 
     func setICloudSync(_ enabled: Bool) {
@@ -1258,76 +1346,95 @@ final class ClipboardStore {
         try? fm.createDirectory(at: newBlobs, withIntermediateDirectories: true,
                                 attributes: [.posixPermissions: 0o700])
 
-        if fm.fileExists(atPath: newStore.path),
-           let data = try? Data(contentsOf: newStore),
+        copyFiles(from: imagesDir, to: newImages, extensions: ["png"])
+        copyFiles(from: blobsDir, to: newBlobs, extensions: ["rtf", "html", "txt"])
+        baseDir = target; imagesDir = newImages; blobsDir = newBlobs; storeURL = newStore
+
+        // A store already in the target folder came from another Mac or an
+        // earlier session: merge it rather than overwrite it.
+        if let data = try? Data(contentsOf: newStore),
            let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
-            copyImages(from: imagesDir, to: newImages)
-            copyBlobs(from: blobsDir, to: newBlobs)
-            baseDir = target; imagesDir = newImages; blobsDir = newBlobs; storeURL = newStore
             mergeExternal(snap)
         } else {
-            copyImages(from: imagesDir, to: newImages)
-            copyBlobs(from: blobsDir, to: newBlobs)
-            baseDir = target; imagesDir = newImages; blobsDir = newBlobs; storeURL = newStore
             saveNow()
         }
         prepareDirectories()
         if enabled { startWatching() }
     }
 
-    private func copyImages(from src: URL, to dst: URL) {
+    private func copyFiles(from src: URL, to dst: URL, extensions: Set<String>) {
         let fm = FileManager.default
         guard let files = try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil) else { return }
-        for f in files where f.pathExtension == "png" {
-            let target = dst.appendingPathComponent(f.lastPathComponent)
-            if !fm.fileExists(atPath: target.path) { try? fm.copyItem(at: f, to: target) }
-        }
-    }
-
-    private func copyBlobs(from src: URL, to dst: URL) {
-        let fm = FileManager.default
-        guard let files = try? fm.contentsOfDirectory(at: src, includingPropertiesForKeys: nil) else { return }
-        for file in files where file.pathExtension == "rtf" || file.pathExtension == "html" || file.pathExtension == "txt" {
+        for file in files where extensions.contains(file.pathExtension) {
             let target = dst.appendingPathComponent(file.lastPathComponent)
             if !fm.fileExists(atPath: target.path) { try? fm.copyItem(at: file, to: target) }
         }
     }
 
-    private func contentKey(_ item: ClipItem) -> String {
-        switch item.type {
-        case .image: return "img:" + (item.imageHash ?? item.imageFileName ?? item.id.uuidString)
-        case .color: return "col:" + (item.colorHex ?? "")
-        case .file:  return "file:" + item.fileURLs.joined(separator: "|")
-        default:     return "txt:\(item.contentHash)"
+    /// One clip per copied thing, newest copy first.
+    ///
+    /// The merge is a union: a clip one side holds and the other does not is
+    /// kept, because "absent" means "not seen here yet" far more often than
+    /// "deleted". A tombstone is the one thing that means deleted, and it only
+    /// counts against a clip the shared file no longer lists - so an undo, or
+    /// a re-copy of the same thing, revives the clip on every Mac.
+    ///
+    /// ponytail: a Mac saving state from before a deletion can revive the
+    /// clip. A per-Mac revision counter would order those writes; the union
+    /// keeps the data rather than lose it.
+    nonisolated static func mergeClips(local: [ClipItem],
+                                       remote: [ClipItem],
+                                       tombstones: [String: Date]) -> [ClipItem] {
+        let remoteIDs = Set(remote.map(\.id))
+        // Newest first; on a tie the local copy comes first and wins below.
+        let ordered = (local + remote).enumerated().sorted { lhs, rhs in
+            lhs.element.createdAt == rhs.element.createdAt
+                ? lhs.offset < rhs.offset
+                : lhs.element.createdAt > rhs.element.createdAt
         }
+        var ids = Set<UUID>()
+        var hashes = Set<UInt64>()
+        var merged: [ClipItem] = []
+        for (_, clip) in ordered {
+            if tombstones[clip.id.uuidString] != nil, !remoteIDs.contains(clip.id) { continue }
+            guard ids.insert(clip.id).inserted, hashes.insert(clip.contentHash).inserted else { continue }
+            merged.append(clip)
+        }
+        return merged
     }
 
     private func mergeExternal(_ snap: Snapshot) {
-        var combined = (items + snap.items).sorted { $0.createdAt > $1.createdAt }
-        var seen = Set<String>()
-        var merged: [ClipItem] = []
-        for it in combined where seen.insert(contentKey(it)).inserted { merged.append(it) }
-        items = merged
-
-        var byID: [UUID: Pinboard] = Dictionary(uniqueKeysWithValues: pinboards.map { ($0.id, $0) })
-        for b in snap.pinboards where byID[b.id] == nil {
-            byID[b.id] = b
+        let mergedTombstones = tombstones.merging(snap.deleted) { max($0, $1) }
+        let remoteBoardIDs = Set(snap.pinboards.map(\.id))
+        var boards = pinboards.filter { board in
+            mergedTombstones[board.id.uuidString] == nil || remoteBoardIDs.contains(board.id)
         }
-        pinboards = pinboards.map { byID[$0.id] ?? $0 }
-            + byID.values.filter { b in !pinboards.contains(where: { $0.id == b.id }) }
+        for board in snap.pinboards where !boards.contains(where: { $0.id == board.id }) {
+            boards.append(board)
+        }
+        var clips = Self.mergeClips(local: items, remote: snap.items, tombstones: mergedTombstones)
+        Self.unpinOrphanedClips(&clips, boards: boards)
 
-        // Clips whose board only exists on the other device still need a home.
-        let boardIDs = Set(pinboards.map(\.id))
-        for i in items.indices where items[i].list != nil && !boardIDs.contains(items[i].list!) {
-            items[i].list = nil
-            items[i].pinnedAt = nil
+        // Nothing new: do not write, or two Macs answer each other's saves
+        // forever.
+        guard clips != items || boards != pinboards || mergedTombstones != tombstones else { return }
+        items = clips
+        pinboards = boards
+        tombstones = mergedTombstones
+        if case .pinboard(let current) = source, !boards.contains(where: { $0.id == current }) {
+            source = .history
         }
         trimHistory()
-        combined.removeAll()
-        refreshAllDerivedState()
         spillPendingRichText()
-        selectFirst()
+        if selectedItem == nil { selectFirst() }
+        reconcileMultiSelection()
         saveNow()
+    }
+
+    private func recordTombstones(_ ids: some Sequence<UUID>, at date: Date = Date()) {
+        for id in ids { tombstones[id.uuidString] = date }
+        let cutoff = date.addingTimeInterval(-Self.tombstoneRetention)
+        tombstones = tombstones.filter { $0.value >= cutoff }
     }
 
     private func startWatching() {
@@ -1338,12 +1445,18 @@ final class ClipboardStore {
             fileDescriptor: fd, eventMask: [.write, .rename, .delete], queue: .main)
         src.setEventHandler { [weak self] in
             guard let self else { return }
-            if Date() < self.ignoreWatchUntil { return }
-            if let data = try? Data(contentsOf: self.storeURL),
-               let snap = try? JSONDecoder().decode(Snapshot.self, from: data) {
-                self.mergeExternal(snap)
-            }
+            // Saves are atomic, so every event - the other Mac's and this
+            // app's own - leaves the descriptor on a replaced file. Re-arm
+            // first: returning early used to leave the watch dead for the rest
+            // of the session.
             self.startWatching()
+            guard let data = try? Data(contentsOf: self.storeURL) else { return }
+            // This app's own save lands here too. Comparing bytes is a memcmp;
+            // decoding is not, and merging our own file back in would answer
+            // the other Mac's saves with saves of our own.
+            if data == Self.lastWritten.withLock({ $0 }) { return }
+            guard let snap = try? JSONDecoder().decode(Snapshot.self, from: data) else { return }
+            self.mergeExternal(snap)
         }
         src.setCancelHandler { close(fd) }
         src.resume()

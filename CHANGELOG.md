@@ -6,6 +6,43 @@ All notable changes to Pesty are documented here. The format is based on
 
 ## [Unreleased]
 
+### Fixed
+- Clips deleted, cleared, or aged out of history now take their stored text
+  body with them. Earlier builds wrote every text clip's body to a sidecar
+  file and only ever deleted the image, RTF and HTML ones, so deleted content
+  stayed on disk - and in iCloud Drive, where it was synced to the other Mac.
+  The first launch after this update also removes the files that leaked.
+- A card's age is refreshed when the bar opens. It is cached when the clip is
+  captured, so everything copied during a session read "Just now" until its
+  content changed.
+- A history file that cannot be decoded is set aside as
+  `store.corrupt-<timestamp>.json` instead of being overwritten by the next
+  save, and a file that cannot be read at all turns saving off for the session
+  rather than replacing a history this launch never saw. Both are reported in
+  a notice when the app starts.
+- The last change before quitting is on disk when the app exits. Saving
+  deferred the write, and the queued write waited on a main thread that was
+  already gone.
+- iCloud Drive sync: the store file is watched again after every event, so a
+  change made on the other Mac is picked up for the rest of the session and
+  not only until this Mac's first save. A merge that changes nothing no longer
+  writes the file back, which is what made two Macs overwrite each other in a
+  loop, and a merge recognizes this app's own write instead of reading it back.
+- Deleting a clip on one Mac now deletes it on the other. Deletions travel as
+  tombstones in the store file, and undoing a deletion brings the clip back on
+  both. Retention pruning stays local, as its setting promises.
+
+### Changed
+- Deleting or clearing many clips scans the remaining clips once instead of
+  once per removed clip.
+- Moving the selection repaints the two cards whose selection changed, rather
+  than every card in the strip.
+- Clips decoded from disk no longer recompute their cached state twice.
+
+### Removed
+- The `reference/paste-re` static-analysis notes on Paste are no longer
+  published with the repository. They are kept locally and ignored by git.
+
 ## [1.4.0] - 2026-10-25
 
 ### Added

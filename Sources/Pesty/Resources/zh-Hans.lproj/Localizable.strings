@@ -254,3 +254,5 @@
 "iCloud account unavailable — sync paused" = "iCloud 账户不可用 —— 同步已暂停";
 "Checking iCloud account…" = "正在检查 iCloud 账户…";
 "Some items failed to upload - will retry" = "部分项目上传失败 —— 将重试";
+"Couldn't read your clipboard history. Nothing will be saved until Pesty is relaunched." = "无法读取剪贴板历史。重新启动 Pesty 之前不会保存任何内容。";
+"Your clipboard history was unreadable and has been set aside as %@." = "剪贴板历史文件已损坏，已另存为 %@。";
