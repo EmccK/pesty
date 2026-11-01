@@ -20,5 +20,8 @@ packaging/Pesty.iconset/
 # Assistant scratch space (session notes, memory).
 .workbuddy-ai/
 
+# Static-analysis notes on Paste: kept locally, not published.
+reference/paste-re/
+
 packaging/*.pkg
 packaging/*.provisionprofile
